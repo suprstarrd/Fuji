@@ -9,8 +9,8 @@ public record struct BoundingBox(Vec3 Min, Vec3 Max)
 	public readonly Vec3 Center => (Min + Max) / 2;
 	public readonly Vec3 Size => Max - Min;
 
-	public BoundingBox(Vec3 position, float size)
-		: this(position - Vec3.One * size / 2, position + Vec3.One * size) { }
+	public BoundingBox(Vec3 position, float size) 
+		: this(position - Vec3.One * size / 2, position + Vec3.One * size / 2) {}
 
 	public readonly PlaneIntersectionType Intersects(in Plane plane)
 	{
