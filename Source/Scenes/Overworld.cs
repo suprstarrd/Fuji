@@ -180,7 +180,6 @@ public class Overworld : Scene
 	private readonly Material material = new(Assets.Shaders["Sprite"]);
 	private Subtexture strawberryImage = Assets.Subtextures["icon_strawberry"];
 	private readonly Menu restartConfirmMenu = new();
-
 	private bool WasBigSlide = false;
 	#endregion
 
@@ -223,7 +222,7 @@ public class Overworld : Scene
 	}
 	#endregion
 
-	#region Overworld Methods
+  #region Overworld Methods
 	public List<Entry> GetCurrentModEntries()
 	{
 		List<Entry> entriesTemp = [];
@@ -535,12 +534,12 @@ public class Overworld : Scene
 
 				var modIcon = mod.Subtextures.TryGetValue(mod.ModInfo.Icon ?? "", out var value) ? value : strawberryImage;
 				var modIconSelectedSize = sel ? ModIconSizeLarge : ModIconSize;
-				var modIconSize = new Vec2(modIconSelectedSize / modIcon.Width, modIconSelectedSize / modIcon.Height) * Game.RelativeScale;
+        var modIconSize = new Vec2(modIconSelectedSize / modIcon.Width, modIconSelectedSize / modIcon.Height) * Game.RelativeScale;
 
 				batch.Image(
 					modIcon,
 					new Vec2(
-						((sel ? -(ModIconSizeLarge - ModIconSize) : 0) + ModIconLeftMargin) * Game.RelativeScale, // Horizontal
+            ((sel ? -(ModIconSizeLarge - ModIconSize) : 0) + ModIconLeftMargin) * Game.RelativeScale, // Horizontal
 						((sel ? -(ModIconSizeLarge - ModIconSize) : 0) + (ModIconSpacing * relativeIndex) - ModIconVertAdjust) * Game.RelativeScale + (bounds.Height / 2)// Vertical
 					),
 					Vec2.Zero, modIconSize, 0, Color.White);
