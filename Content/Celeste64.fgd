@@ -5,6 +5,7 @@
 	snowDirection(vector) : "Snow move direction"
 	music(string) : "Music"
 	ambience(string) : "Ambience"
+	chunksize(int) : "Chunk Size" : "Used for determining chunk size when merging brushes together."
 ]
 
 @SolidClass = Decoration : "Used for decoration, not for gameplay"
@@ -20,8 +21,9 @@
 @PointClass size(-16 -16 0, 16 16 16) model({ "path": model }) = StaticProp : "Static Prop" 
 [
     model(String) : "Model file path" : : "Set this to a 3D model file."
-	radius(integer) : "Radius" : 6 : "Pushout Radius"
-	height(integer) : "Height" : 12 : "Pushout Height"
+    radius(integer) : "Radius" : 6 : "Pushout Radius"
+    height(integer) : "Height" : 12 : "Pushout Height"
+    angle(integer) : "Prop Rotation"
 ]
 
 @PointClass size(-16 -16 0, 16 16 32) = PlayerSpawn : "Player start position" 
@@ -51,7 +53,7 @@
 @PointClass model({ "path": "Models/sign.glb", "scale": 12 }) = SignPost : "Says some stuff" 
 [
     dialog(string) : "Dialog Entry"
-	angle(integer) : "Sign Rotation"
+    angle(integer) : "Sign Rotation"
 ]
 
 @PointClass size(-8 -8 -8, 8 8 8) = Node : "Moving entity path node"
@@ -91,27 +93,35 @@
 @SolidClass = TrafficBlock : "Moves to the node when the player is riding it"
 [
     target(string) : "Target Node"
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = FallingBlock : "Falls when player rides it"
 [
-   
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = FloatyBlock : "Moves when player lands on it"
 [
-   
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = GateBlock : "Opens when the player gets all the switches"
 [
-   target(string) : "Target Node"
+    target(string) : "Target Node"
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = MovingBlock : "Moves back and forth constantly"
 [
-   target(string) : "Target Node"
-   slow(integer) : "Go Slower"
+    target(string) : "Target Node"
+    slow(integer) : "Go Slower"
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = DoubleDashPuzzleBlock : "Stand on with 2 dashes to solve puzzle"
@@ -126,15 +136,31 @@
 [
 ]
 
+@SolidClass = LoadingZone : "Invisible; Teleports the player to a different map"
+[
+    map(string) : "Map"
+    checkpointname(string) : "Name of the checkpoint the player should spawn at. Leave blank to spawn at start"
+    issubmap(integer) : "Are we going to a submap" : 0
+]
+
 @SolidClass = BreakBlock : "Dash to Break it"
 [
-	bounces(integer) : "Bounces" : : "If this block Bounces the player when broken"
-	transparent(integer) : "Transparent" : : "Has transparent elements"
+    bounces(integer) : "Bounces" : : "If this block Bounces the player when broken"
+    transparent(integer) : "Transparent" : : "Has transparent elements"
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = CassetteBlock : "Toggles to the Music"
 [
-	startOn(integer) : "Start On" : : "If this block should start toggled on"
+    startOn(integer) : "Start On" : : "If this block should start toggled on"
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
+]
+
+@SolidClass = NonClimbableBlock : "Used for blocks that should never be climbable"
+[
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]
 
 @SolidClass = EndingArea : "Where the game ends"
@@ -150,4 +176,13 @@
 @PointClass = IntroCar : "Intro Car ............. :)"
 [
 
+]
+
+@PointClass size(-16 -16 0, 16 16 16) model({ "path": model, "scale": scale} ) = SolidMesh : "Solid Mesh" 
+[
+    model(String) : "Model file path" : : "Set this to a 3D model file."
+    scale(float) : "Scale"
+    angle(integer) : "Object Rotation"
+    climbable(string)  : "Is this climbable" : "true"
+    canwalljump(string)  : "Can the player wall jump off of this" : "true"
 ]

@@ -2,8 +2,7 @@
 	"ID": "english",
 	"Label": "English",
 	"Font": "Renogare",
-	"Strings":
-	{
+	"Strings": {
 		"Confirm": "Confirm",
 		"Cancel": "Cancel",
 		"Back": "Back",
@@ -11,22 +10,120 @@
 		"Restart": "Restart",
 		"Start": "Start",
 		"Exit": "Exit",
+		"Load": "Load",
+		"Create": "Create",
+		"Delete": "Delete",
+		"Copy": "Copy",
+		"Bind": "Bind",
+		"Reset": "Reset",
+		"Clear": "Clear",
 		"RestartLevel": "Clear Save & Restart Level",
 		"PauseTitle": "Paused",
 		"PauseResume": "Resume",
+		"SkipCutscene": "Skip Cutscene",
+		"SkipCutscene.desc": "Skips the Current Cutscene",
+		"PauseResume.desc": "Continue Playing",
 		"PauseRetry": "Retry",
+		"PauseRetry.desc": "Restart the Current Map",
 		"PauseOptions": "Options",
+		"PauseOptions.desc": "Update the Game Options",
 		"PauseSaveQuit": "Save & Quit",
+		"PauseSaveQuit.desc": "Save & Quit to the Title Screen",
+		"PauseSaves": "Saves",
+		"PauseSaves.desc": "Open the Save Select Menu",
+		"PauseModsMenu": "Mods",
+		"PauseModsMenu.desc": "Open the Mods Menu",
 		"OptionsTitle": "Options",
 		"OptionsFullscreen": "Fullscreen",
+		"OptionsFullscreen.desc": "Control if the Game is Fullscreen or Windowed",
 		"OptionsZGuide": "Z-Guide",
+		"OptionsZGuide.desc": "Enable the Z Guide below the Player",
 		"OptionsTimer": "Timer",
+		"OptionsTimer.desc": "Enable the In-Game Timer",
 		"OptionsBGM": "BGM",
+		"OptionsBGM.desc": "Control the Music Volume",
 		"OptionsSFX": "SFX",
-		"OptionsInvertCamera": "Inverted Camera"
+		"OptionsSFX.desc": "Control the Sound Effects Volume",
+		"OptionsInvertCamera": "Inverted Camera",
+		"OptionsInvertCamera.desc": "Control if the Camera X and Y axes are inverted",
+		"OptionsVSync": "V-Sync",
+		"OptionsVSync.desc": "Toggle V-Sync",
+		"OptionsResolution": "Resolution Scale",
+		"OptionsResolution.desc": "Change the Resolution Scale",
+		"OptionsQuickStart": "Enable Quick Start",
+		"OptionsQuickStart.desc": "While enabled, hold CTRL during startup to load the last played level",
+		"OptionsToggleOn": "ON",
+		"OptionsToggleOff": "OFF",
+		"OptionsYes": "Yes",
+		"OptionsNo": "No",
+		"KeyboardConfig": "Keyboard Config",
+		"KeyboardConfig.desc": "Rebind Keyboard/Mouse Controls",
+		"ControllerConfig": "Controller Config",
+		"ControllerConfig.desc": "Rebind Controller Controls",
+		"ControlsHeaderGame": "Game",
+		"ControlsHeaderMenu": "Menu (Requires at least 1 binding)",
+		"ControlsHeaderAdvanced": "Advanced",
+		"ControlsResetToDefault": "Reset To Default",
+		"PressToBind": "Press any button to bind it to \"{0}\"",
+		"Jump": "Jump",
+		"Dash": "Dash",
+		"Climb": "Climb",
+		"Pause": "Pause",
+		"MoveDown": "Move Down",
+		"MoveUp": "Move Up",
+		"MoveRight": "Move Right",
+		"MoveLeft": "Move Left",
+		"CameraDown": "Camera Down",
+		"CameraUp": "Camera Up",
+		"CameraRight": "Camera Right",
+		"CameraLeft": "Camera Left",
+		"CreateFile": "Create File",
+		"CopyFile": "Create File",
+		"DeleteFile": "Delete File",
+		"ResetBindings": "Reset Bindings",
+		"ClearBindings": "Clear Bindings",
+		"MenuDown": "Menu Down",
+		"MenuUp": "Menu Up",
+		"MenuRight": "Menu Right",
+		"MenuLeft": "Menu Left",
+		"DebugMenu": "Debug Menu",
+		"FullScreen": "Full Screen",
+		"ReloadAssets": "Reload Assets",
+		"Skin": "Skin",
+		"Skin.desc": "Choose a Skin to Wear",
+		"SaveCreateFile": "Create new file?",
+		"SaveDeleteFile": "Delete this file?",
+		"SaveDeleteDefaultFile": "Cannot fully delete default save file:'{0}'. Reset it to default instead?",
+		"SaveCopyFile": "Copy this file?",
+		"FujiOptions": "Fuji Options...",
+		"FujiOptions.desc": "Configure Options for the Fuji Mod Loader",
+		"FujiWriteLog": "Write Log File",
+		"FujiWriteLog.desc": "Control if the Game writes to the Log File",
+		"FujiEnableDebugMenu": "Enable Debug Menu (F6)",
+		"FujiEnableDebugMenu.desc": "Enable access to the Debug Menu by pressing F6",
+		"FujiAdditionalLog": "Enable Additional Logging",
+		"FujiAdditionalLog.desc": "Outputs more info to the console which may be useful to developers",
+		"FujiAutoReload": "Enable Auto Reload",
+		"FujiAutoReload.desc": "If enabled, automatically reloads mods whenever a file is changed",
+		"FujiFailedToLoad": "Failed to load the following mods:",
+		"FujiOpenLogFile": "Open Log File",
+		"FujiOpenLogFile.desc": "Open the Game's Log File for more information",
+		"FujiContinueToMods": "Continue",
+		"FujiContinueToMods.desc": "Continue to the Mods Menu",
+		"FujiOverworldModSlideNote": "Use Up/Down to filter by mod",
+		"FujiLoaderStatusRegistering": "Registering modules...",
+		"FujiLoaderStatusNormal": "Loading assets: {0} ({1} of {2})",
+		"FujiOpenUserPath": "Open Game Folder",
+		"FujiOpenUserPath.desc": "Open the user folder for Fuji",
+		"FujiSaving": "Saving...",
+		"FailedToLoadMods": "Failed to load {0} mods. Check Mods Menu for details.",
+		"ModEnabled": "Enabled",
+		"ModOptions": "Mod Options",
+		"ConfirmDisableMod": "Continue & Disable Mod",
+		"ModSafeDisableErrorMessage": "This mod can't be disabled because it would disable the level you're currently in.\nTry going to the main menu first.",
+		"QuitToMainMenu": "Quit to Main Menu"
 	},
-	"Dialog":
-	{
+	"Dialog": {
 		"Granny1": [
 			{
 				"Face": "granny/Laugh",
@@ -172,7 +269,6 @@
 				"Text": "That's not how I remember it."
 			}
 		],
-
 		"Theo1": [
 			{
 				"Face": "theo/Default",
@@ -347,7 +443,6 @@
 				"Text": "..."
 			}
 		],
-
 		"Baddy1": [
 			{
 				"Face": "madeline/Default",
@@ -555,7 +650,6 @@
 				"Text": "Maybe... maybe it'll be okay."
 			}
 		],
-
 		"Sign1": [
 			{
 				"Face": "signpost",
@@ -704,7 +798,6 @@
 				"Text": "I surely don't know, for\nI am but a humble signpost."
 			}
 		],
-
 		"CreditsSign": [
 			{
 				"Face": "signpost",

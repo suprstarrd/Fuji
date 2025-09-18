@@ -1,12 +1,12 @@
-
 namespace Celeste64;
 
 public class Badeline : NPC
 {
-	public const string TALK_FLAG = "BADELINE";
+	public virtual string TALK_FLAG => "BADELINE";
 
-	private readonly Hair hair;
-	private Color hairColor = 0x9B3FB5;
+	public readonly Hair Hair;
+	public virtual Color HairColor => 0x9B3FB5;
+	public Player? TalkingTo;
 
 	public Badeline() : base(Assets.Models["badeline"])
 	{
@@ -16,31 +16,31 @@ public class Badeline : NPC
 		{
 			if (mat.Name == "Hair")
 			{
-				mat.Color = hairColor;
+				mat.Color = HairColor;
 				mat.Effects = 0;
 			}
-            mat.SilhouetteColor = hairColor;
+			mat.SilhouetteColor = HairColor;
 		}
 
-        hair = new()
-        {
-            Color = hairColor,
+		Hair = new()
+		{
+			Color = HairColor,
 			ForwardOffsetPerNode = 0,
-            Nodes = 10
-        };
+			Nodes = 10
+		};
 
-        InteractHoverOffset = new Vec3(0, -2, 16);
+		InteractHoverOffset = new Vec3(0, -2, 16);
 		InteractRadius = 32;
 		CheckForDialog();
 	}
 
-    public override void Update()
-    {
-        base.Update();
-		
+	public override void Update()
+	{
+		base.Update();
+
 		// update model
-		Model.Transform = 
-			Matrix.CreateScale(3) * 
+		Model.Transform =
+			Matrix.CreateScale(3) *
 			Matrix.CreateTranslation(0, 0, MathF.Sin(World.GeneralTimer * 2) * 1.0f - 1.5f);
 
 		// update hair
@@ -49,23 +49,24 @@ public class Badeline : NPC
 			foreach (var it in Model.Instance.Armature.LogicalNodes)
 				if (it.Name == "Head")
 					hairMatrix = it.ModelMatrix * SkinnedModel.BaseTranslation * Model.Transform * Matrix;
-			hair.Flags = Model.Flags;
-			hair.Forward = -new Vec3(Facing, 0);
-			hair.Materials[0].Effects = 0;
-			hair.Update(hairMatrix);
+			Hair.Flags = Model.Flags;
+			Hair.Forward = -new Vec3(Facing, 0);
+			Hair.Materials[0].Effects = 0;
+			Hair.Update(hairMatrix);
 		}
-		
-    }
 
-    public override void Interact(Player player)
+	}
+
+	public override void Interact(Player player)
 	{
+		TalkingTo = player;
 		World.Add(new Cutscene(Conversation));
 	}
 
-	private CoEnumerator Conversation(Cutscene cs)
+	public virtual CoEnumerator Conversation(Cutscene cs)
 	{
-		yield return Co.Run(cs.MoveToDistance(World.Get<Player>(), Position.XY(), 16));
-		yield return Co.Run(cs.FaceEachOther(World.Get<Player>(), this));
+		yield return Co.Run(cs.MoveToDistance(TalkingTo, Position.XY(), 16));
+		yield return Co.Run(cs.FaceEachOther(TalkingTo, this));
 
 		int index = Save.CurrentRecord.GetFlag(TALK_FLAG) + 1;
 		yield return Co.Run(cs.Say(Loc.Lines($"Baddy{index}")));
@@ -73,14 +74,14 @@ public class Badeline : NPC
 		CheckForDialog();
 	}
 
-    public override void CollectModels(List<(Actor Actor, Model Model)> populate)
-    {
-		populate.Add((this, hair));
-        base.CollectModels(populate);
-    }
+	public override void CollectModels(List<(Actor Actor, Model Model)> populate)
+	{
+		populate.Add((this, Hair));
+		base.CollectModels(populate);
+	}
 
-	private void CheckForDialog()
-	{ 
+	public virtual void CheckForDialog()
+	{
 		InteractEnabled = Loc.HasLines($"Baddy{Save.CurrentRecord.GetFlag(TALK_FLAG) + 1}");
 	}
 }

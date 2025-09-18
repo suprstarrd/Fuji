@@ -1,18 +1,16 @@
-﻿
-namespace Celeste64;
+﻿namespace Celeste64;
 
 public class Spring : Attacher, IHaveModels, IPickup
 {
 	public SkinnedModel Model;
 
-	public float PickupRadius => 16;
+	public virtual float PickupRadius => 16;
 
-	private float tCooldown = 0;
+	public float TCooldown = 0;
 
 	public Spring()
 	{
-		Model = new SkinnedModel(Assets.Models["spring_board"]);
-		Model.Transform = Matrix.CreateScale(8.0f);
+		Model = new SkinnedModel(Assets.Models["spring_board"]) { Transform = Matrix.CreateScale(8.0f) };
 		Model.SetLooping("Spring", false);
 		Model.Play("Idle");
 
@@ -23,26 +21,26 @@ public class Spring : Attacher, IHaveModels, IPickup
 	{
 		Model.Update();
 
-		if (tCooldown > 0)
+		if (TCooldown > 0)
 		{
-			tCooldown -= Time.Delta;
-			if (tCooldown <= 0)
+			TCooldown -= Time.Delta;
+			if (TCooldown <= 0)
 				UpdateOffScreen = false;
 		}
 	}
 
-	public void CollectModels(List<(Actor Actor, Model Model)> populate)
+	public virtual void CollectModels(List<(Actor Actor, Model Model)> populate)
 	{
 		populate.Add((this, Model));
 	}
 
-	public void Pickup(Player player)
+	public virtual void Pickup(Player player)
 	{
-		if (tCooldown <= 0)
+		if (TCooldown <= 0)
 		{
 			UpdateOffScreen = true;
 			Audio.Play(Sfx.sfx_springboard, Position);
-			tCooldown = 1.0f;
+			TCooldown = 1.0f;
 			Model.Play("Spring", true);
 			player.Spring(this);
 

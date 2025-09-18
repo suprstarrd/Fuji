@@ -1,11 +1,13 @@
-﻿using System.Runtime.InteropServices;
+using Celeste64.Mod;
 using Sledge.Formats.Map.Formats;
-using SledgeMapObject = Sledge.Formats.Map.Objects.MapObject;
-using SledgeSolid = Sledge.Formats.Map.Objects.Solid;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using SledgeEntity = Sledge.Formats.Map.Objects.Entity;
 using SledgeFace = Sledge.Formats.Map.Objects.Face;
 using SledgeMap = Sledge.Formats.Map.Objects.MapFile;
-using System.Runtime.CompilerServices;
+using SledgeMapObject = Sledge.Formats.Map.Objects.MapObject;
+using SledgeSolid = Sledge.Formats.Map.Objects.Solid;
 
 namespace Celeste64;
 
@@ -13,6 +15,7 @@ public class Map
 {
 	public class ActorFactory(Func<Map, SledgeEntity, Actor?> create)
 	{
+		public GameMod? Mod;
 		public bool UseSolidsAsBounds;
 		public bool IsSolidGeometry;
 		public Func<Map, SledgeEntity, Actor?> Create = create;
@@ -23,14 +26,18 @@ public class Map
 	public readonly string Name;
 	public readonly string Filename;
 	public readonly string Folder;
-	public readonly SledgeMap Data;
-	public readonly string Skybox;
+	public readonly SledgeMap? Data;
+	public readonly string? Skybox;
 	public readonly float SnowAmount;
 	public readonly Vec3 SnowWind;
-	public readonly string Music;
-	public readonly string Ambience;
+	public readonly string? Music;
+	public readonly string? Ambience;
+	public readonly int? ChunkSize;
 
-	public static readonly Dictionary<string, ActorFactory> ActorFactories =  new()
+	public readonly bool isMalformed = false;
+	public readonly string? readExceptionMessage;
+
+	public static readonly Dictionary<string, ActorFactory> ActorFactories = new()
 	{
 		["Strawberry"] = new((map, entity) =>
 		{
@@ -53,16 +60,24 @@ public class Map
 			return new MovingBlock(
 				entity.GetIntProperty("slow", 0) > 0,
 				map.FindTargetNodeFromParam(entity, "target"));
-		}) { IsSolidGeometry = true },
+		})
+		{ IsSolidGeometry = true },
 		["GateBlock"] = new((map, entity) => new GateBlock(map.FindTargetNodeFromParam(entity, "target"))) { IsSolidGeometry = true },
 		["TrafficBlock"] = new((map, entity) => new TrafficBlock(map.FindTargetNodeFromParam(entity, "target"))) { IsSolidGeometry = true },
 		["FallingBlock"] = new((map, entity) =>
 		{
 			return new FallingBlock() { Secret = (entity.GetIntProperty("secret", 0) != 0) };
-		}) { IsSolidGeometry = true },
+		})
+		{ IsSolidGeometry = true },
 		["FloatyBlock"] = new((map, entity) => new FloatyBlock()) { IsSolidGeometry = true },
 		["DeathBlock"] = new((map, entity) => new DeathBlock()) { UseSolidsAsBounds = true },
 		["SpikeBlock"] = new((map, entity) => new SpikeBlock()) { UseSolidsAsBounds = true },
+		["LoadingZone"] = new((map, entity) => new LoadingZone(
+			entity.GetStringProperty("map", map.Name),
+			entity.GetStringProperty("checkpointname", string.Empty),
+			entity.GetIntProperty("issubmap", 0) > 0
+		))
+		{ UseSolidsAsBounds = true },
 		["Spring"] = new((map, entity) => new Spring()),
 		["Granny"] = new((map, entity) => new Granny()),
 		["Badeline"] = new((map, entity) => new Badeline()),
@@ -70,8 +85,7 @@ public class Map
 		["SignPost"] = new((map, entity) => new Signpost(entity.GetStringProperty("dialog", string.Empty))),
 		["StaticProp"] = new((map, entity) =>
 		{
-			var prop = Path.GetFileNameWithoutExtension(entity.GetStringProperty("model", string.Empty));
-			if (Assets.Models.TryGetValue(prop, out var model))
+			if (Assets.Models.TryGetValueFromFullPath(entity.GetStringProperty("model", string.Empty), out var model))
 			{
 				return new StaticProp(model,
 					entity.GetIntProperty("radius", 6),
@@ -86,14 +100,26 @@ public class Map
 				entity.GetIntProperty("bounces", 0) != 0,
 				entity.GetIntProperty("transparent", 0) != 0,
 				entity.GetIntProperty("secret", 0) != 0);
-		}) { IsSolidGeometry = true },
+		})
+		{ IsSolidGeometry = true },
 		["CassetteBlock"] = new((map, entity) => new CassetteBlock(entity.GetIntProperty("startOn", 1) != 0)) { IsSolidGeometry = true },
+		["NonClimbableBlock"] = new((map, entity) => new NonClimbableBlock()) { IsSolidGeometry = true },
 		["DoubleDashPuzzleBlock"] = new((map, entity) => new DoubleDashPuzzleBlock()) { IsSolidGeometry = true },
 		["EndingArea"] = new((map, entity) => new EndingArea()) { UseSolidsAsBounds = true },
 		["Fog"] = new((map, entity) => new FogRing(entity)),
 		["FixedCamera"] = new((map, entity) => new FixedCamera(map.FindTargetNodeFromParam(entity, "target"))) { UseSolidsAsBounds = true },
-		["IntroCar"] = new((map, entity) => new IntroCar(entity.GetFloatProperty("scale", 6)))
+		["IntroCar"] = new((map, entity) => new IntroCar(entity.GetFloatProperty("scale", 6))),
+		["SolidMesh"] = new((map, entity) =>
+		{
+			if (Assets.Models.TryGetValueFromFullPath(entity.GetStringProperty("model", string.Empty), out var model))
+			{
+				return new SolidMesh(model, entity.GetFloatProperty("scale", 6));
+			}
+			return null;
+		})
 	};
+
+	internal static Dictionary<string, ActorFactory> ModActorFactories = new();
 
 	private readonly Dictionary<string, DefaultMaterial> currentMaterials = [];
 	private readonly Dictionary<int, string> groupNames = [];
@@ -101,7 +127,7 @@ public class Map
 	private readonly List<SledgeEntity> staticDecorations = [];
 	private readonly List<SledgeEntity> floatingDecorations = [];
 	private readonly List<SledgeEntity> entities = [];
-	private readonly HashSet<string> checkpoints = [];
+	public readonly HashSet<string> Checkpoints = [];
 	private readonly BoundingBox localStaticSolidsBounds;
 	private readonly Matrix baseTransform = Matrix.CreateScale(0.2f);
 
@@ -109,20 +135,37 @@ public class Map
 	public World? LoadWorld;
 	public int LoadStrawberryCounter = 0;
 
-	public Map(string name, string filename)
+	public Map(string name, string virtPath, Stream stream)
 	{
 		Name = name;
-		Filename = filename;
-		Folder = Path.GetDirectoryName(filename) ?? string.Empty;
+		Filename = virtPath;
+		Folder = Path.GetDirectoryName(virtPath) ?? string.Empty;
 
 		var format = new QuakeMapFormat();
-		Data = format.ReadFromFile(filename);
+		try
+		{
+			Data = format.Read(stream);
+		}
+		catch (Exception e)
+		{
+			Data = null;
 
-		Skybox = Data.Worldspawn.GetStringProperty("skybox", "city");
-		SnowAmount = Data.Worldspawn.GetFloatProperty("snowAmount", 1);
-		SnowWind = Data.Worldspawn.GetVectorProperty("snowDirection", -Vec3.UnitZ);
-		Music = Data.Worldspawn.GetStringProperty("music", string.Empty);
-		Ambience = Data.Worldspawn.GetStringProperty("ambience", string.Empty);
+			isMalformed = true;
+
+			readExceptionMessage = e.Message;
+
+			LogHelper.Error($"Failed to load map {name}", e);
+		}
+
+		if (Data != null)
+		{
+			Skybox = Data.Worldspawn.GetStringProperty("skybox", "city");
+			SnowAmount = Data.Worldspawn.GetFloatProperty("snowAmount", 1);
+			SnowWind = Data.Worldspawn.GetVectorProperty("snowDirection", -Vec3.UnitZ);
+			Music = Data.Worldspawn.GetStringProperty("music", string.Empty);
+			Ambience = Data.Worldspawn.GetStringProperty("ambience", string.Empty);
+			ChunkSize = Data.Worldspawn.GetIntProperty("chunksize", 1000);
+		}
 
 		void QueryObjects(SledgeMapObject obj)
 		{
@@ -145,7 +188,7 @@ public class Map
 					}
 					else if (entity.ClassName == "PlayerSpawn")
 					{
-						checkpoints.Add(entity.GetStringProperty("name", StartCheckpoint));
+						Checkpoints.Add(entity.GetStringProperty("name", StartCheckpoint));
 						entities.Add(entity);
 					}
 					else
@@ -165,7 +208,10 @@ public class Map
 			}
 		}
 
-		QueryObjects(Data.Worldspawn);
+		if (Data != null)
+		{
+			QueryObjects(Data.Worldspawn);
+		}
 
 		// figure out entire bounds of static solids (localized)
 		if (staticSolids.Count > 0)
@@ -179,13 +225,13 @@ public class Map
 		{
 			var rng = new Rng();
 			var n = floatingDecorations.Count;
-			while (n > 1) 
+			while (n > 1)
 			{
 				int k = rng.Int(n--);
-                (floatingDecorations[k], floatingDecorations[n]) = 
+				(floatingDecorations[k], floatingDecorations[n]) =
 				(floatingDecorations[n], floatingDecorations[k]);
-            }
-        }
+			}
+		}
 
 		// TODO:
 		// A LOT more data could be cached here instead of done every time the map is Loaded into a World
@@ -200,7 +246,12 @@ public class Map
 		// create materials for each texture type so they can be shared by each surface
 		currentMaterials.Clear();
 		foreach (var it in Assets.Textures)
-			currentMaterials.Add(it.Key, new DefaultMaterial(it.Value));
+		{
+			if (!currentMaterials.ContainsKey(it.Key))
+			{
+				currentMaterials.Add(it.Key, new DefaultMaterial(Assets.Textures[it.Key]));
+			}
+		}
 
 		// load all static solids
 		// group them in big chunks (this helps collision tests so we can cull entire objects based on their bounding box)
@@ -211,25 +262,25 @@ public class Map
 			var bounds = localStaticSolidsBounds;
 
 			// split into a grid so we don't have one massive solid
-			var chunk = new Vec3(1000, 1000, 1000);
-			for (int x = 0; x < bounds.Size.X / chunk.X; x ++)
-			for (int y = 0; y < bounds.Size.Y / chunk.Y; y ++)
-			for (int z = 0; z < bounds.Size.Z / chunk.Z; z ++)
-			{
-				var box = new BoundingBox(bounds.Min, bounds.Min + chunk * new Vec3(1 + x, 1 + y, 1 + z));
-
-				for (int i = available.Count - 1; i >= 0; i --)
-					if (box.Contains(available[i].Bounds.Center))
+			var chunk = new Vec3(ChunkSize ?? 1000, ChunkSize ?? 1000, ChunkSize ?? 1000);
+			for (int x = 0; x < bounds.Size.X / chunk.X; x++)
+				for (int y = 0; y < bounds.Size.Y / chunk.Y; y++)
+					for (int z = 0; z < bounds.Size.Z / chunk.Z; z++)
 					{
-						combined.Add(available[i].Solid);
-						available.RemoveAt(i);
-					}
+						var box = new BoundingBox(bounds.Min, bounds.Min + chunk * new Vec3(1 + x, 1 + y, 1 + z));
 
-				var result = new Solid();
-				GenerateSolid(result, combined);
-				world.Add(result);
-				combined.Clear();
-			}
+						for (int i = available.Count - 1; i >= 0; i--)
+							if (box.Contains(available[i].Bounds.Center))
+							{
+								combined.Add(available[i].Solid);
+								available.RemoveAt(i);
+							}
+
+						var result = new Solid();
+						GenerateSolid(result, combined);
+						world.Add(result);
+						combined.Clear();
+					}
 		}
 
 		// load all decorations into one big model *shrug*
@@ -253,7 +304,7 @@ public class Map
 				var decoration = new FloatingDecoration();
 
 				var to = Math.Min(from + floatingDecorations.Count / 4, floatingDecorations.Count);
-				for (int j = from; j < to; j ++)
+				for (int j = from; j < to; j++)
 					CollectSolids(floatingDecorations[j], decorations);
 				from = to;
 
@@ -267,58 +318,31 @@ public class Map
 		foreach (var entity in entities)
 			LoadActor(world, entity);
 
-		Log.Info($"Strawb Count: {LoadStrawberryCounter}");
 		LoadStrawberryCounter = 0;
 		LoadWorld = null;
+
+		ModManager.Instance.OnMapLoaded(this);
 	}
 
 	private void LoadActor(World world, SledgeEntity entity)
 	{
-		void HandleActorCreation(World world, SledgeEntity entity, Actor it, ActorFactory? factory)
+		if (ModActorFactories.TryGetValue(entity.ClassName, out var modfactory))
 		{
-			if ((factory?.IsSolidGeometry ?? false) && it is Solid solid)
-			{
-				List<SledgeSolid> collection = [];
-				CollectSolids(entity, collection);
-				GenerateSolid(solid, collection);
-			}
-
-			if (entity.Properties.ContainsKey("origin"))
-				it.Position = Vec3.Transform(entity.GetVectorProperty("origin", Vec3.Zero), baseTransform);
-
-			if (entity.Properties.ContainsKey("_tb_group") && 
-				groupNames.TryGetValue(entity.GetIntProperty("_tb_group", -1), out var groupName))
-				it.GroupName = groupName;
-
-			if (entity.Properties.ContainsKey("angle"))
-				it.Facing = Calc.AngleToVector(entity.GetIntProperty("angle", 0) * Calc.DegToRad - MathF.PI / 2);
-
-			if (factory?.UseSolidsAsBounds ?? false)
-			{
-				BoundingBox bounds = new();
-				if (entity.Children.FirstOrDefault() is SledgeSolid sol)
-					bounds = CalculateSolidBounds(sol, baseTransform);
-
-				it.Position = bounds.Center;
-				bounds.Min -= it.Position;
-				bounds.Max -= it.Position;
-				it.LocalBounds = bounds;
-			}
-			
-			world.Add(it);
+			var it = modfactory.Create(this, entity);
+			if (it != null)
+				HandleActorCreation(world, entity, it, modfactory);
 		}
-
-		if (entity.ClassName == "PlayerSpawn")
+		else if (entity.ClassName == "PlayerSpawn")
 		{
 			var name = entity.GetStringProperty("name", StartCheckpoint);
 
 			// spawns ther player if the world entry is this checkpoint
 			// OR the world entry has no checkpoint and we're the start
 			// OR the world entry checkpoint is misconfigured and we're the start
-			var spawnsPlayer = 
+			var spawnsPlayer =
 				(world.Entry.CheckPoint == name) ||
 				(string.IsNullOrEmpty(world.Entry.CheckPoint) && name == StartCheckpoint) ||
-				(!checkpoints.Contains(world.Entry.CheckPoint) && name == StartCheckpoint);
+				(!Checkpoints.Contains(world.Entry.CheckPoint) && name == StartCheckpoint);
 
 			if (spawnsPlayer)
 				HandleActorCreation(world, entity, new Player(), null);
@@ -335,6 +359,86 @@ public class Map
 		}
 	}
 
+	public void HandleActorCreation(World world, SledgeEntity entity, Actor it, ActorFactory? factory)
+	{
+		if (it is Solid solid)
+		{
+			if ((factory?.IsSolidGeometry ?? false))
+			{
+				List<SledgeSolid> collection = [];
+				CollectSolids(entity, collection);
+				GenerateSolid(solid, collection);
+			}
+			if (entity.Properties.ContainsKey("climbable"))
+			{
+				string climbable = entity.GetStringProperty("climbable", "true").ToLower();
+				solid.Climbable = climbable != "false" && climbable != "0";
+			}
+
+			if (entity.Properties.ContainsKey("canwalljump"))
+			{
+				string canwalljump = entity.GetStringProperty("canwalljump", "true").ToLower();
+				solid.AllowWallJumps = canwalljump != "false" && canwalljump != "0";
+			}
+		}
+
+		if (entity.Properties.ContainsKey("origin"))
+			it.Position = Vec3.Transform(entity.GetVectorProperty("origin", Vec3.Zero), baseTransform);
+
+		if (entity.Properties.ContainsKey("_tb_group") &&
+			groupNames.TryGetValue(entity.GetIntProperty("_tb_group", -1), out var groupName))
+			it.GroupName = groupName;
+
+
+		// Fuji Custom - Allows for rotation in maps using either a vec3 rotation property
+		// Or 3 different Angle properties. This is to support compatibility with existing vanilla actors who only use 1 angle property 
+		Vec3 rotationXYZ = new(0, 0, -MathF.PI / 2);
+		if (entity.Properties.ContainsKey("angles") && entity.Properties["angles"].Split(' ').Length == 3)
+		{
+			var value = entity.Properties["angles"];
+			var spl = value.Split(' ');
+			if (spl.Length == 3)
+			{
+				if (float.TryParse(spl[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var y))
+					rotationXYZ.Y = y * Calc.DegToRad;
+				if (float.TryParse(spl[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var z))
+					rotationXYZ.Z = z * Calc.DegToRad - MathF.PI / 2;
+				if (float.TryParse(spl[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var x))
+					rotationXYZ.X = x * Calc.DegToRad;
+			}
+		}
+		else
+		{
+			if (entity.Properties.ContainsKey("anglepitch"))
+				rotationXYZ.X = entity.GetIntProperty("anglepitch", 0) * Calc.DegToRad;
+			if (entity.Properties.ContainsKey("angleroll"))
+				rotationXYZ.Y = entity.GetIntProperty("angleroll", 0) * Calc.DegToRad;
+			if (entity.Properties.ContainsKey("angle"))
+				rotationXYZ.Z = entity.GetIntProperty("angle", 0) * Calc.DegToRad - MathF.PI / 2;
+		}
+		it.RotationXYZ = rotationXYZ;
+
+
+		if (factory?.UseSolidsAsBounds ?? false)
+		{
+			BoundingBox bounds = new();
+			if (entity.Children.FirstOrDefault() is SledgeSolid sol)
+				bounds = CalculateSolidBounds(sol, baseTransform);
+
+			it.Position = bounds.Center;
+			bounds.Min -= it.Position;
+			bounds.Max -= it.Position;
+			it.LocalBounds = bounds;
+		}
+
+		if (it is Player)
+		{
+			world.MainPlayer = (Player)it;
+		}
+
+		world.Add(it);
+	}
+
 	private SledgeEntity? FindTargetEntity(SledgeMapObject obj, string targetName)
 	{
 		if (string.IsNullOrEmpty(targetName))
@@ -345,7 +449,7 @@ public class Map
 
 		foreach (var child in obj.Children)
 		{
-			if (FindTargetEntity(child, targetName) is {} it)
+			if (FindTargetEntity(child, targetName) is { } it)
 				return it;
 		}
 
@@ -354,6 +458,12 @@ public class Map
 
 	public bool FindTargetNode(string name, out Vec3 pos)
 	{
+		if (Data == null)
+		{
+			pos = Vec3.Zero;
+			return false;
+		}
+
 		if (FindTargetEntity(Data.Worldspawn, name) is { } target)
 		{
 			pos = Vec3.Transform(target.GetVectorProperty("origin", Vec3.Zero), baseTransform);
@@ -403,7 +513,7 @@ public class Map
 	private BoundingBox CalculateSolidBounds(List<SledgeSolid> collection, in Matrix transform)
 	{
 		BoundingBox box = new();
-		
+
 		if (collection.Count > 0)
 			box = CalculateSolidBounds(collection[0]);
 
@@ -427,7 +537,10 @@ public class Map
 				if (!used.Contains(face.TextureName))
 				{
 					used.Add(face.TextureName);
-					model.Materials.Add(currentMaterials[face.TextureName]);
+					if (currentMaterials.ContainsKey(face.TextureName))
+						model.Materials.Add(currentMaterials[face.TextureName]);
+					else
+						model.Materials.Add(currentMaterials["wall"]);
 				}
 			}
 
@@ -453,7 +566,7 @@ public class Map
 				{
 					if (face.TextureName.StartsWith("__") || face.TextureName == "TB_empty" || face.TextureName == "invisible")
 						continue;
-					if (face.TextureName != texture.Name)
+					if (face.TextureName != texture.Name && texture.Name != "wall")
 						continue;
 
 					var vertexIndex = meshVertices.Count;
@@ -514,33 +627,33 @@ public class Map
 
 		// find all used materials
 		foreach (var solid in collection)
-		foreach (var face in solid.Faces)
-		{
-			if (face.TextureName.StartsWith("__") || face.TextureName == "TB_empty")
-				continue;
-
-			// add collider vertices
-			var vertexIndex = colliderVertices.Count;
-			var last = Vec3.Zero;
-			for (int i = 0; i < face.Vertices.Count; i++)
+			foreach (var face in solid.Faces)
 			{
-				// skip collider vertices that are too close together ...
-				var it = Vec3.Transform(face.Vertices[i], transform);
-				if (i == 0 || (last - it).LengthSquared() > 1)
-					colliderVertices.Add(last = it);
-			}
+				if (face.TextureName.StartsWith("__") || face.TextureName == "TB_empty")
+					continue;
 
-			// add collider face
-			if (colliderVertices.Count > vertexIndex)
-			{
-				colliderFaces.Add(new ()
+				// add collider vertices
+				var vertexIndex = colliderVertices.Count;
+				var last = Vec3.Zero;
+				for (int i = 0; i < face.Vertices.Count; i++)
 				{
-					Plane = Plane.Normalize(Plane.Transform(face.Plane, transform)),
-					VertexStart = vertexIndex,
-					VertexCount = colliderVertices.Count - vertexIndex
-				});
+					// skip collider vertices that are too close together ...
+					var it = Vec3.Transform(face.Vertices[i], transform);
+					if (i == 0 || (last - it).LengthSquared() > 1)
+						colliderVertices.Add(last = it);
+				}
+
+				// add collider face
+				if (colliderVertices.Count > vertexIndex)
+				{
+					colliderFaces.Add(new()
+					{
+						Plane = Plane.Normalize(Plane.Transform(face.Plane, transform)),
+						VertexStart = vertexIndex,
+						VertexCount = colliderVertices.Count - vertexIndex
+					});
+				}
 			}
-		}
 
 		// set up values
 		if (colliderVertices.Count > 0)
@@ -573,27 +686,27 @@ public class Map
 				return Vec3.UnitZ;
 		}
 
-        // Apply scaling to the axes
-        var scaledUAxis = face.UAxis / face.XScale;
-        var scaledVAxis = face.VAxis / face.YScale;
+		// Apply scaling to the axes
+		var scaledUAxis = face.UAxis / face.XScale;
+		var scaledVAxis = face.VAxis / face.YScale;
 
-        // Determine the rotation axis based on the face normal
-        var rotationAxis = GetRotationAxis(face.Plane.Normal);
-        var rotationMatrix = Matrix.CreateFromAxisAngle(rotationAxis, face.Rotation * Calc.DegToRad);
-        rotatedUAxis = Vec3.Transform(scaledUAxis, rotationMatrix);
-        rotatedVAxis = Vec3.Transform(scaledVAxis, rotationMatrix);
+		// Determine the rotation axis based on the face normal
+		var rotationAxis = GetRotationAxis(face.Plane.Normal);
+		var rotationMatrix = Matrix.CreateFromAxisAngle(rotationAxis, face.Rotation * Calc.DegToRad);
+		rotatedUAxis = Vec3.Transform(scaledUAxis, rotationMatrix);
+		rotatedVAxis = Vec3.Transform(scaledVAxis, rotationMatrix);
 	}
 
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vec2 CalculateUV(in SledgeFace face, in Vec3 vertex, in Vec2 textureSize, in Vec3 rotatedUAxis, in Vec3 rotatedVAxis)
-    {
-        Vec2 uv;
-        uv.X = vertex.X * rotatedUAxis.X + vertex.Y * rotatedUAxis.Y + vertex.Z * rotatedUAxis.Z;
-        uv.Y = vertex.X * rotatedVAxis.X + vertex.Y * rotatedVAxis.Y + vertex.Z * rotatedVAxis.Z;
-        uv.X += face.XShift;
-        uv.Y += face.YShift;
-        uv.X /= textureSize.X;
-        uv.Y /= textureSize.Y;
-        return uv;
-    }
+	private static Vec2 CalculateUV(in SledgeFace face, in Vec3 vertex, in Vec2 textureSize, in Vec3 rotatedUAxis, in Vec3 rotatedVAxis)
+	{
+		Vec2 uv;
+		uv.X = vertex.X * rotatedUAxis.X + vertex.Y * rotatedUAxis.Y + vertex.Z * rotatedUAxis.Z;
+		uv.Y = vertex.X * rotatedVAxis.X + vertex.Y * rotatedVAxis.Y + vertex.Z * rotatedVAxis.Z;
+		uv.X += face.XShift;
+		uv.Y += face.YShift;
+		uv.X /= textureSize.X;
+		uv.Y /= textureSize.Y;
+		return uv;
+	}
 }

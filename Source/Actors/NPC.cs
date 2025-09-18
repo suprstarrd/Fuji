@@ -1,5 +1,4 @@
-﻿
-namespace Celeste64;
+﻿namespace Celeste64;
 
 public abstract class NPC : Actor, IHaveModels, IHaveSprites, IHavePushout, ICastPointShadow
 {
@@ -10,12 +9,12 @@ public abstract class NPC : Actor, IHaveModels, IHaveSprites, IHavePushout, ICas
 	public Vec3 InteractHoverOffset;
 	public bool IsPlayerOver;
 
-	private bool showHover = false;
-	private float showTimer = 0;
+	public bool ShowHover = false;
+	public float ShowTimer = 0;
 
-	public float PushoutHeight { get; set; } = 12;
-	public float PushoutRadius { get; set; } = 8;
-	public float PointShadowAlpha { get; set; }
+	public virtual float PushoutHeight { get; set; } = 12;
+	public virtual float PushoutRadius { get; set; } = 8;
+	public virtual float PointShadowAlpha { get; set; }
 
 	public NPC(SkinnedTemplate model)
 	{
@@ -35,14 +34,14 @@ public abstract class NPC : Actor, IHaveModels, IHaveSprites, IHavePushout, ICas
 	{
 		if (World.Camera.Frustum.Contains(WorldBounds))
 			Model.Update();
-		showTimer += Time.Delta;
+		ShowTimer += Time.Delta;
 	}
 
 	public override void LateUpdate()
 	{
-		if (!showHover && IsPlayerOver)
+		if (!ShowHover && IsPlayerOver)
 			Audio.Play(Sfx.ui_npc_popup);
-		showHover = IsPlayerOver;
+		ShowHover = IsPlayerOver;
 		IsPlayerOver = false;
 	}
 
@@ -51,12 +50,12 @@ public abstract class NPC : Actor, IHaveModels, IHaveSprites, IHavePushout, ICas
 		populate.Add((this, Model));
 	}
 
-	public void CollectSprites(List<Sprite> populate)
+	public virtual void CollectSprites(List<Sprite> populate)
 	{
-		if (showHover)
+		if (ShowHover)
 		{
 			var at = Vec3.Transform(InteractHoverOffset, Matrix);
-			at += Vec3.UnitZ * MathF.Sin(showTimer * 8);
+			at += Vec3.UnitZ * MathF.Sin(ShowTimer * 8);
 			populate.Add(Sprite.CreateBillboard(World, at, "interact", 2, Color.White) with { Post = true });
 		}
 	}

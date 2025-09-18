@@ -1,20 +1,19 @@
-
 namespace Celeste64;
 
 public class IntroCar : Solid
 {
-	private readonly SkinnedModel wheels;
-	private readonly SkinnedModel body;
-	private readonly float scale = 6;
-	private Vec3 spawnPoint;
-	private bool hasRider = false;
+	public readonly SkinnedModel WheelsModel;
+	public readonly SkinnedModel BodyModel;
+	public readonly float Scale = 6;
+	public Vec3 SpawnPoint;
+	public bool HasRider = false;
 
 	public IntroCar(float scale)
 	{
-		this.scale = scale;
+		this.Scale = scale;
 
-		wheels = new(Assets.Models["car_wheels"]);
-		body = new(Assets.Models["car_top"]);
+		WheelsModel = new(Assets.Models["car_wheels"]);
+		BodyModel = new(Assets.Models["car_top"]);
 
 		// create solids out of body mesh ....?
 		{
@@ -25,9 +24,8 @@ public class IntroCar : Solid
 			var meshIndices = collider.Template.Indices;
 			var mat = SkinnedModel.BaseTranslation * collider.Transform * Matrix.CreateScale(scale);
 
-			for (int i = 0; i < collider.Instance.Count; i++)
+			foreach (var drawable in collider.Instance)
 			{
-				var drawable = collider.Instance[i];
 				if (drawable.Transform is not SharpGLTF.Transforms.RigidTransform statXform)
 					continue;
 
@@ -37,7 +35,7 @@ public class IntroCar : Solid
 				foreach (var primitive in meshPart)
 				{
 					int v = vertices.Count;
-					for (int n = 0; n < primitive.Count; n ++)
+					for (int n = 0; n < primitive.Count; n++)
 						vertices.Add(Vec3.Transform(meshVertices[meshIndices[primitive.Index + n + 0]].Pos, meshMatrix));
 					for (int n = 0; n < primitive.Count; n += 3)
 					{
@@ -62,44 +60,44 @@ public class IntroCar : Solid
 		Transparent = true;
 	}
 
-    public override void Added()
-    {
-        base.Added();
+	public override void Added()
+	{
+		base.Added();
 		Position += -Vec3.UnitZ * 1.3f;
-		spawnPoint = Position;
-    }
+		SpawnPoint = Position;
+	}
 
-    public override void Update()
-    {
-        base.Update();
+	public override void Update()
+	{
+		base.Update();
 
-		if (!hasRider && HasPlayerRider())
+		if (!HasRider && HasPlayerRider())
 		{
-			hasRider = true;
+			HasRider = true;
 			Audio.Play(Sfx.sfx_car_down, Position);
 		}
-		else if (hasRider && !HasPlayerRider())
+		else if (HasRider && !HasPlayerRider())
 		{
-			hasRider = false;
+			HasRider = false;
 			Audio.Play(Sfx.sfx_car_up, Position);
 		}
 
-		var target = (hasRider ? spawnPoint - Vec3.UnitZ * 1.5f : spawnPoint);
+		var target = (HasRider ? SpawnPoint - Vec3.UnitZ * 1.5f : SpawnPoint);
 		var step = Utils.Approach(Position, target, 20 * Time.Delta);
 		MoveTo(step);
-    }
+	}
 
-    public override void CollectModels(List<(Actor Actor, Model Model)> populate)
-    {
+	public override void CollectModels(List<(Actor Actor, Model Model)> populate)
+	{
 		// hack: don't use actor translation for wheels....
-		wheels.Transform = 
-			Matrix.CreateTranslation((spawnPoint - Position) / scale) * 
-			Matrix.CreateScale(scale);
-		
-		body.Transform = 
-			Matrix.CreateScale(scale);
+		WheelsModel.Transform =
+			Matrix.CreateTranslation((SpawnPoint - Position) / Scale) *
+			Matrix.CreateScale(Scale);
 
-		populate.Add((this, wheels));
-		populate.Add((this, body));
-    }
+		BodyModel.Transform =
+			Matrix.CreateScale(Scale);
+
+		populate.Add((this, WheelsModel));
+		populate.Add((this, BodyModel));
+	}
 }

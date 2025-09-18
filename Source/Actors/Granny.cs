@@ -1,9 +1,9 @@
-﻿
-namespace Celeste64;
+﻿namespace Celeste64;
 
 public class Granny : NPC
 {
-	public const string TALK_FLAG = "GRANNY";
+	public virtual string TALK_FLAG => "GRANNY";
+	public Player? TalkingTo;
 
 	public Granny() : base(Assets.Models["granny"])
 	{
@@ -15,13 +15,14 @@ public class Granny : NPC
 
 	public override void Interact(Player player)
 	{
+		TalkingTo = player;
 		World.Add(new Cutscene(Conversation));
 	}
 
-	private CoEnumerator Conversation(Cutscene cs)
+	public virtual CoEnumerator Conversation(Cutscene cs)
 	{
-		yield return Co.Run(cs.MoveToDistance(World.Get<Player>(), Position.XY(), 16));
-		yield return Co.Run(cs.FaceEachOther(World.Get<Player>(), this));
+		yield return Co.Run(cs.MoveToDistance(TalkingTo, Position.XY(), 16));
+		yield return Co.Run(cs.FaceEachOther(TalkingTo, this));
 
 		int index = Save.CurrentRecord.GetFlag(TALK_FLAG) + 1;
 		yield return Co.Run(cs.Say(Loc.Lines($"Granny{index}")));
@@ -29,8 +30,8 @@ public class Granny : NPC
 		CheckForDialog();
 	}
 
-	private void CheckForDialog()
-	{ 
+	public virtual void CheckForDialog()
+	{
 		InteractEnabled = Loc.HasLines($"Granny{Save.CurrentRecord.GetFlag(TALK_FLAG) + 1}");
 	}
 }

@@ -1,73 +1,73 @@
-using System.Diagnostics;
-using System.Globalization;
-using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Celeste64;
 
 class Program
 {
-	public static void Main(string[] args)
+	// Moved to Celeste64.Launcher project
+}
+
+public class CommandParser
+{
+	/*
+		Simple (perhaps to a fault) command arg matcher
+		Each match represents an arg
+		Group #2 is the arg name
+		Group #4 is the arg value (if it exists)
+	*/
+	public readonly string Pattern = """-{1,2}([a-z0-9-]+)(="?([^"-]+)"?)?\b""";
+	public readonly Regex Exp;
+	public readonly List<string> Flags = [];
+	public readonly Dictionary<string, string> Args = new();
+
+
+	public CommandParser(string[] args)
 	{
-		Log.Info($"Celeste 64 v.{Game.Version.Major}.{Game.Version.Minor}.{Game.Version.Build}");
+		Exp = new(Pattern);
 
-		AppDomain.CurrentDomain.UnhandledException += (object sender, UnhandledExceptionEventArgs e) =>
-		{
-			HandleError((Exception)e.ExceptionObject);
-		};
+		string argsStr = String.Join(" ", args);
 
-		Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-		Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
-		CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
-		CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
-
-		try
+		foreach (Match match in Exp.Matches(argsStr))
 		{
-			App.Run<Game>(Game.GamePath, 1280, 720);
-		}
-		catch (Exception e)
-		{
-			HandleError(e);
+			if (match.Groups[2].Value == string.Empty)
+			{
+				Flags.Add(match.Groups[1].Value);
+			}
+			else
+			{
+				Args.Add(match.Groups[1].Value, match.Groups[3].Value);
+			}
 		}
 	}
-	
-	private static void HandleError(Exception e)
+
+	/// <summary>
+	/// Check if the command line args contain the specified arg name
+	/// </summary>
+	/// <param name="name">The name to search for</param>
+	/// <returns>Whether the element exists</returns>
+	public bool Has(string name)
 	{
-		// write error to console in case they can see stdout
-		Console.WriteLine(e?.ToString() ?? string.Empty);
+		if (Flags.Contains(name)) return true;
+		if (Args.ContainsKey(name)) return true;
 
-		// construct a log message
-		const string ErrorFileName = "ErrorLog.txt";
-		StringBuilder error = new();
-		error.AppendLine($"Celeste 64 v.{Game.Version.Major}.{Game.Version.Minor}.{Game.Version.Build}");
-		error.AppendLine($"Error Log ({DateTime.Now})");
-		error.AppendLine($"Call Stack:");
-		error.AppendLine(e?.ToString() ?? string.Empty);
-		error.AppendLine($"Game Output:");
-		lock (Log.Logs)
-			error.AppendLine(Log.Logs.ToString());
+		return false;
+	}
 
-		// write to file
-		string path = ErrorFileName;
-		{
-			if (App.Running)
-			{
-				try
-				{
-					path = Path.Join(App.UserPath, ErrorFileName);
-				}
-				catch
-				{
-					path = ErrorFileName;
-				}
-			}
+	/// <summary>
+	/// Get the value of a command line arg
+	/// Args with values take priority over flags without values (flags).
+	/// </summary>
+	/// <param name="name">The arg name to search for</param>
+	/// <returns>
+	/// An empty string if a flag was found with the name
+	/// The value of the arg if one was found
+	/// Null if neither a flag nor a value could be found
+	/// </returns>
+	public string? Get(string name)
+	{
+		if (Args.ContainsKey(name)) return Args[name];
+		if (Flags.Contains(name)) return String.Empty;
 
-			File.WriteAllText(path, error.ToString());
-		}
-
-		// open the file
-		if (File.Exists(path))
-		{
-			new Process { StartInfo = new ProcessStartInfo(path) { UseShellExecute = true } }.Start();
-		}
+		return null;
 	}
 }

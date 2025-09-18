@@ -1,6 +1,4 @@
 using FMOD.Studio;
-using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace Celeste64;
@@ -9,7 +7,7 @@ public static class Audio
 {
 	private class Module : Foster.Framework.Module
 	{
-		public override void Update() 
+		public override void Update()
 			=> Audio.Update();
 
 		public override void Shutdown()
@@ -21,14 +19,19 @@ public static class Audio
 	private static readonly Dictionary<string, FMOD.GUID> events = [];
 	private static readonly Dictionary<string, FMOD.GUID> buses = [];
 
+	//Fuji Custom
+	private static readonly List<SoundHandle> playingSounds = [];
+	internal static FMOD.ChannelGroup SoundEffectGroup { get; private set; }
+	internal static FMOD.ChannelGroup MusicGroup { get; private set; }
+
 	public static void Init()
 	{
 		// live upate allows FMOD UI to interact with sounds in-game in real time
 		var flags = FMOD.INITFLAGS.NORMAL;
 		var studioFlags = INITFLAGS.NORMAL;
-		#if DEBUG
-			studioFlags |= INITFLAGS.LIVEUPDATE;
-		#endif
+#if DEBUG
+		studioFlags |= INITFLAGS.LIVEUPDATE;
+#endif
 
 		Log.Info($"FMOD Bindings: v{FMOD.VERSION.number:x}");
 
@@ -49,7 +52,10 @@ public static class Audio
 
 		// Initialize FMOD
 		Check(system.initialize(1024, studioFlags, flags, IntPtr.Zero));
-
+		Check(core.createChannelGroup("SoundEffects", out var soundGroup));
+		SoundEffectGroup = soundGroup;
+		Check(core.createChannelGroup("Music", out var musicGroup));
+		MusicGroup = musicGroup;
 		App.Register<Module>();
 	}
 
@@ -61,11 +67,11 @@ public static class Audio
 			return;
 		isResolverSet = true;
 
-		var path 
-			=  Path.GetDirectoryName(AppContext.BaseDirectory) 
+		var path
+			= Path.GetDirectoryName(AppContext.BaseDirectory)
 			?? Directory.GetCurrentDirectory();
 
-		NativeLibrary.SetDllImportResolver(typeof(FMOD.Studio.System).Assembly, 
+		NativeLibrary.SetDllImportResolver(typeof(FMOD.Studio.System).Assembly,
 			(name, assembly, dllImportSearchPath) =>
 			{
 				name = Path.GetFileNameWithoutExtension(name);
@@ -138,7 +144,77 @@ public static class Audio
 	public static void LoadBank(string path)
 	{
 		Check(system.loadBankFile(path, LOAD_BANK_FLAGS.NORMAL, out var bank));
+		LoadBank(bank);
+	}
 
+	public static void LoadBankFromStream(Stream stream)
+	{
+		Check(system.loadBankMemory(stream.ReadAllToByteArray(), LOAD_BANK_FLAGS.NORMAL, out var bank));
+		LoadBank(bank);
+	}
+
+	// Fuji Custom
+	public static FMOD.Sound? LoadWavFromStream(Stream stream)
+	{
+		Check(system.getCoreSystem(out var core));
+		var exinfo = new FMOD.CREATESOUNDEXINFO();
+		exinfo.cbsize = Marshal.SizeOf(exinfo);
+		exinfo.length = (uint)stream.Length;
+		Check(core.createSound(stream.ReadAllToByteArray(), FMOD.MODE.OPENMEMORY, ref exinfo, out var sound));
+		return sound;
+	}
+
+	// Fuji Custom
+	public static SoundHandle? PlaySound(string name, int loopCount = 0, int loopStart = 0, int loopEnd = int.MaxValue)
+	{
+		if (Assets.Sounds.TryGetValue(name, out var sound))
+		{
+			return PlaySoundInChannel(sound, SoundEffectGroup, loopCount, loopStart, loopEnd);
+		}
+		return null;
+	}
+
+	// Fuji Custom
+	public static SoundHandle? PlaySound(FMOD.Sound sound, int loopCount = 0, int loopStart = 0, int loopEnd = int.MaxValue)
+	{
+		return PlaySoundInChannel(sound, SoundEffectGroup, loopCount, loopStart, loopEnd);
+	}
+
+	// Fuji Custom
+	public static SoundHandle? PlayMusic(string name, int loopCount = -1, int loopStart = 0, int loopEnd = int.MaxValue)
+	{
+		if (Assets.Music.TryGetValue(name, out var song))
+		{
+			return PlaySoundInChannel(song, MusicGroup, loopCount, loopStart, loopEnd);
+		}
+		return null;
+	}
+
+	// Fuji Custom
+	public static SoundHandle? PlayMusic(FMOD.Sound sound, int loopCount = -1, int loopStart = 0, int loopEnd = int.MaxValue)
+	{
+		return PlaySoundInChannel(sound, MusicGroup, loopCount, loopStart, loopEnd);
+	}
+
+	// Fuji Custom
+	private static SoundHandle? PlaySoundInChannel(FMOD.Sound sound, FMOD.ChannelGroup group, int loopCount = 0, int loopStart = 0, int loopEnd = 1000)
+	{
+		Check(system.getCoreSystem(out var core));
+		Check(core.playSound(sound, group, false, out var channel));
+		if (loopCount != 0)
+		{
+			Check(channel.setMode(FMOD.MODE.LOOP_NORMAL));
+			Check(channel.setLoopCount(loopCount));
+			sound.getLength(out uint length, FMOD.TIMEUNIT.MS);
+			Check(channel.setLoopPoints((uint)Math.Clamp(loopStart, 0, length), FMOD.TIMEUNIT.MS, (uint)Math.Clamp(loopEnd, 0, length - 1), FMOD.TIMEUNIT.MS));
+		}
+		SoundHandle handle = new(channel, sound);
+		playingSounds.Add(handle);
+		return handle;
+	}
+
+	private static void LoadBank(Bank bank)
+	{
 		banks.Add(bank);
 		bank.getEventList(out var evs);
 		bank.getBusList(out var bs);
@@ -167,6 +243,18 @@ public static class Audio
 		banks.Clear();
 		events.Clear();
 		buses.Clear();
+		StopSounds();
+	}
+
+	// Fuji Custom
+	public static void StopSounds()
+	{
+		foreach (var sound in playingSounds)
+		{
+			if (sound.IsPlaying)
+				sound.Stop();
+		}
+		playingSounds.Clear();
 	}
 
 	public static AudioHandle Create(in FMOD.GUID id, in Vec3 position)
@@ -210,7 +298,7 @@ public static class Audio
 			Log.Warning($"Failed to create Audio Event Instance: {result}");
 			return new AudioHandle();
 		}
-		
+
 		return new AudioHandle(instance);
 	}
 
@@ -294,7 +382,10 @@ public static class Audio
 	}
 
 	internal static void Check(FMOD.RESULT result)
-		=> Debug.Assert(result == FMOD.RESULT.OK, $"FMOD Failed: {result}");
+	{
+		if (result != FMOD.RESULT.OK)
+			throw new Exception($"FMOD Failed: {result} ({FMOD.Error.String(result)})");
+	}
 }
 
 public static class AudioUtil

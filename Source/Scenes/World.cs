@@ -1,3 +1,4 @@
+using Celeste64.Mod;
 using System.Diagnostics;
 using ModelEntry = (Celeste64.Actor Actor, Celeste64.Model Model);
 
@@ -5,18 +6,75 @@ namespace Celeste64;
 
 public class World : Scene
 {
-	public enum EntryReasons { Entered, Returned, Respawned }
+	#region Properties
+	/// <summary>
+	/// Entry reasons of a World instance
+	/// </summary>
+	public enum EntryReasons
+	{
+		/// <summary>
+		/// The player likely entered this world from the overworld screen
+		/// </summary>
+		Entered,
+		/// <summary>
+		/// The player is returning here from another world
+		/// </summary>
+		Returned,
+		/// <summary>
+		/// The player respawned here after death
+		/// </summary>
+		Respawned
+	}
 	public readonly record struct EntryInfo(string Map, string CheckPoint, bool Submap, EntryReasons Reason);
 
+	/// <summary>
+	/// The current camera of this world
+	/// </summary>
 	public Camera Camera = new();
+	/// <summary>
+	/// RNG manager of the world
+	/// </summary>
 	public Rng Rng = new(0);
+	/// <summary>
+	/// Represents how much longer the current hit stun will last in seconds
+	/// </summary>
 	public float HitStun = 0;
+	/// <summary>
+	/// Whether the game is currently paused
+	/// </summary>
 	public bool Paused = false;
+	/// <summary>
+	/// The entry reason of this world
+	/// </summary>
 	public EntryInfo Entry = new();
 	public readonly GridPartition<Solid> SolidGrid = new(200, 100);
+
+	/// <summary>
+	/// Total amount of time spent in this world so far. Affected by <see cref="World.TimeScale">timescale</see>.
+	/// For a realtime alternative see <see cref="World.RealTimer">RealTimer</see>
+	/// </summary>
 	public float GeneralTimer = 0;
+	/// <summary>
+	/// The total amount of time spent in this world so far, unaffected by timescale.
+	/// </summary>
+	public float RealTimer = 0;
+	/// <summary>
+	/// The current delta time unaffected by timescale. For a timescale-friendly alternative see <see cref="Time.Delta">Time.Delta</see>
+	/// </summary>
+	public float RealDelta = 0;
+	/// <summary>
+	/// The timescale of the world, where a value of 1 represents 100% and 0.1 represents 10%
+	/// </summary>
+	public float TimeScale = 1;
+
+	/// <summary>
+	/// Altitude at which the player will automatically die
+	/// </summary>
 	public float DeathPlane = -100;
 
+	/// <summary>
+	/// List of actors currently in this world
+	/// </summary>
 	public readonly List<Actor> Actors = [];
 	private readonly List<Actor> adding = [];
 	private readonly List<Actor> destroying = [];
@@ -34,22 +92,27 @@ public class World : Scene
 	private readonly SpriteRenderer spriteRenderer = new();
 
 	// Pause Menu, only drawn when actually paused
-	private readonly Menu pauseMenu = new();
+	private Menu pauseMenu = new();
 	private AudioHandle pauseSnapshot;
-	
+	private float PauseSaveDebounce = 0;
+
+	// Panic menu
+	private Menu badMapWarningMenu = new();
+	protected bool Panicked = false;
+
 	// makes the Strawberry UI wiggle when one is collected
 	private float strawbCounterWiggle = 0;
 	private float strawbCounterCooldown = 0;
 	private float strawbCounterEase = 0;
 	private int strawbCounterWas;
 
-	private bool IsInEndingArea => Get<Player>() is {} player && Overlaps<EndingArea>(player.Position);
+	private bool IsInEndingArea => MainPlayer is { } player && Overlaps<EndingArea>(player.Position);
 	private bool IsPauseEnabled
 	{
 		get
 		{
 			if (Game.Instance.IsMidTransition) return false;
-			if (Get<Player>() is not Player player) return true;
+			if (MainPlayer is not { } player) return true;
 			return player.IsAbleToPause;
 		}
 	}
@@ -61,12 +124,69 @@ public class World : Scene
 	private int debugUpdateCount;
 	public static bool DebugDraw { get; private set; } = false;
 
+	/// <summary>
+	/// The original data of this world's map, read-only
+	/// </summary>
+	public Map? Map { get; private set; }
+	/// <summary>
+	/// Current active player of this world instance
+	/// </summary>
+	public Player? MainPlayer;
+	#endregion
+
+	#region Constructor
 	public World(EntryInfo entry)
 	{
+		badMapWarningMenu.Title = $"placeholder";
+
+		badMapWarningMenu.Add(new Menu.Option("PauseRetry", () => Game.Instance.Goto(new Transition()
+		{
+			Mode = Transition.Modes.Replace,
+			Scene = () => new World(new(entry.Map, Save.CurrentRecord.Checkpoint, false, World.EntryReasons.Entered)),
+			ToBlack = new SpotlightWipe(),
+			FromBlack = new SpotlightWipe(),
+			StopMusic = true,
+			HoldOnBlackFor = 0,
+			PerformAssetReload = true
+		})));
+
+		badMapWarningMenu.Add(new Menu.Option("FujiOpenLogFile", () =>
+		{
+			LogHelper.OpenLog();
+		}));
+
+		badMapWarningMenu.Add(new Menu.Option("QuitToMainMenu", () => Game.Instance.Goto(new Transition()
+		{
+			Mode = Transition.Modes.Replace,
+			Scene = () => new Overworld(true),
+			FromPause = true,
+			ToPause = true,
+			ToBlack = new SlideWipe(),
+			Saving = false
+		})));
+
 		Entry = entry;
 
 		var stopwatch = Stopwatch.StartNew();
+
+		if (Assets.Maps.ContainsKey(entry.Map) == false)
+		{
+			Panic(new Exception(), $"Sorry, the map {entry.Map} does not exist.\nCheck your mod's Levels.json and Maps folder.", Panicked);
+
+			return;
+		}
+
 		var map = Assets.Maps[entry.Map];
+		Map = map;
+
+		if (Map.isMalformed == true)
+		{
+			Panic(new Exception(), $"Sorry, the map {entry.Map} appears to be broken/corrupted\nIt failed to load because:\n{Map.readExceptionMessage}\nMore information may be available in the logs.", Panicked);
+
+			return;
+		}
+
+		ModManager.Instance.CurrentLevelMod = ModManager.Instance.Mods.FirstOrDefault(mod => mod.Maps.ContainsKey(entry.Map));
 
 		Camera.NearPlane = 20;
 		Camera.FarPlane = 800;
@@ -77,32 +197,43 @@ public class World : Scene
 
 		// setup pause menu
 		{
-			Menu optionsMenu = new Menu();
-			optionsMenu.Title = Loc.Str("OptionsTitle");
-			optionsMenu.Add(new Menu.Toggle(Loc.Str("OptionsFullscreen"), Save.Instance.ToggleFullscreen, () => Save.Instance.Fullscreen));
-			optionsMenu.Add(new Menu.Toggle(Loc.Str("OptionsZGuide"), Save.Instance.ToggleZGuide, () => Save.Instance.ZGuide));
-			optionsMenu.Add(new Menu.Toggle(Loc.Str("OptionsTimer"), Save.Instance.ToggleTimer, () => Save.Instance.SpeedrunTimer));
-			optionsMenu.Add(new Menu.MultiSelect<Save.InvertCameraOptions>(Loc.Str("OptionsInvertCamera"), Save.Instance.SetCameraInverted, () => Save.Instance.InvertCamera));
-			optionsMenu.Add(new Menu.Spacer());
-			optionsMenu.Add(new Menu.Slider(Loc.Str("OptionsBGM"), 0, 10, () => Save.Instance.MusicVolume, Save.Instance.SetMusicVolume));
-			optionsMenu.Add(new Menu.Slider(Loc.Str("OptionsSFX"), 0, 10, () => Save.Instance.SfxVolume, Save.Instance.SetSfxVolume));
+			Menu optionsMenu = new GameOptionsMenu(pauseMenu);
+
+			var modMenu = new ModSelectionMenu(pauseMenu)
+			{
+				Title = Loc.Str("PauseModsMenu")
+			};
 
 			pauseMenu.Title = Loc.Str("PauseTitle");
-            pauseMenu.Add(new Menu.Option(Loc.Str("PauseResume"), () => SetPaused(false)));
-			pauseMenu.Add(new Menu.Option(Loc.Str("PauseRetry"), () =>
+			pauseMenu.Add(new Menu.Option("PauseResume", () =>
+			{
+				SetPaused(false);
+			}));
+			pauseMenu.Add(new Menu.Option("PauseRetry", () =>
 			{
 				SetPaused(false);
 				Audio.StopBus(Sfx.bus_dialog, false);
-				Get<Player>()?.Kill();
+				MainPlayer?.Kill();
 			}));
-			pauseMenu.Add(new Menu.Submenu(Loc.Str("PauseOptions"), pauseMenu, optionsMenu));
-			pauseMenu.Add(new Menu.Option(Loc.Str("PauseSaveQuit"), () => Game.Instance.Goto(new Transition()
+			if (Assets.EnabledSkins.Count > 1)
+			{
+				pauseMenu.Add(new Menu.OptionList("Skin",
+					() => Assets.EnabledSkins.Select(x => x.Name).ToList(),
+					0,
+					() => Assets.EnabledSkins.Count,
+					() => Save.GetSkin().Name, Save.SetSkinName)
+				);
+			}
+			pauseMenu.Add(new Menu.Submenu("PauseOptions", pauseMenu, optionsMenu));
+			pauseMenu.Add(new Menu.Submenu("PauseModsMenu", pauseMenu, modMenu));
+			pauseMenu.Add(new Menu.Option("PauseSaveQuit", () => Game.Instance.Goto(new Transition()
 			{
 				Mode = Transition.Modes.Replace,
 				Scene = () => new Overworld(true),
 				FromPause = true,
 				ToPause = true,
 				ToBlack = new SlideWipe(),
+				PerformAssetReload = ModManager.Instance.NeedsReload,
 				Saving = true
 			})));
 		}
@@ -127,16 +258,53 @@ public class World : Scene
 				}
 			}
 
-			Music = $"event:/music/{map.Music}";
-			Ambience = $"event:/sfx/ambience/{map.Ambience}";
+			// Fuji Custom: Allows playing music and ambience from wav files if available.
+			// Otherwise, uses fmod events like normal.
+			if (map.Music != null && Assets.Music.ContainsKey(map.Music))
+			{
+				MusicWav = map.Music;
+				Music = $"event:/music/";
+			}
+			else
+			{
+				MusicWav = "";
+				Music = $"event:/music/{map.Music}";
+			}
+
+			if (map.Ambience != null && Assets.Music.ContainsKey(map.Ambience))
+			{
+				AmbienceWav = map.Ambience;
+				Ambience = $"event:/sfx/ambience/";
+			}
+			else
+			{
+				AmbienceWav = "";
+				Ambience = $"event:/sfx/ambience/{map.Ambience}";
+			}
 		}
+
+		ModManager.Instance.OnPreMapLoaded(this, map);
 
 		// load content
 		map.Load(this);
 
-		Log.Info($"Loaded Map '{Entry.Map}' in {stopwatch.ElapsedMilliseconds}ms");
-	}
+		ModManager.Instance.OnWorldLoaded(this);
 
+		if (Entry.Reason == EntryReasons.Entered)
+		{
+			Log.Info($"Strawb Count: {adding.Where(x => x is Strawberry).Count()}");
+			Log.Info($"Loaded Map '{ModManager.Instance.CurrentLevelMod?.ModInfo.Id}:{Entry.Map}' in {stopwatch.ElapsedMilliseconds}ms");
+		}
+		else
+		{
+			LogHelper.Verbose($"Respawned in {stopwatch.ElapsedMilliseconds}ms");
+		}
+	}
+	#endregion
+
+	/// <summary>
+	/// Ran when the world is being disposed (e.g. player is leaving to the overworld screen)
+	/// </summary>
 	public override void Disposed()
 	{
 		SetPaused(false);
@@ -150,8 +318,26 @@ public class World : Scene
 
 		postTarget?.Dispose();
 		postTarget = null;
+		ModManager.Instance.CurrentLevelMod = null;
 	}
 
+	/// <summary>
+	/// Ran when the world is entered
+	/// </summary>
+	public override void Entered()
+	{
+		if (MainPlayer is { } player)
+		{
+			player.SetSkin(Save.GetSkin());
+		}
+	}
+
+	#region Public Actor Methods
+	/// <summary>
+	/// Request an instance of an actor type from this world's recycling pool
+	/// </summary>
+	/// <typeparam name="T">The type of the entity to search for</typeparam>
+	/// <returns>Instance of Actor where the type is T, pulled from the recycling pool or constructed if there is none</returns>
 	public T Request<T>() where T : Actor, IRecycle, new()
 	{
 		if (recycled.TryGetValue(typeof(T), out var list) && list.Count > 0)
@@ -164,15 +350,27 @@ public class World : Scene
 		}
 	}
 
+	/// <summary>
+	/// Add an instance of an actor to this world
+	/// </summary>
+	/// <typeparam name="T">Type of the actor to add</typeparam>
+	/// <param name="instance">The instance to be added</param>
+	/// <returns>The newly added actor where the type is T</returns>
 	public T Add<T>(T instance) where T : Actor
 	{
 		adding.Add(instance);
 		instance.Destroying = false;
 		instance.SetWorld(this);
 		instance.Created();
+		ModManager.Instance.OnActorCreated(instance);
 		return instance;
 	}
 
+	/// <summary>
+	/// Get an instance of an actor of the specified type from the world
+	/// </summary>
+	/// <typeparam name="T">The type to search for</typeparam>
+	/// <returns>The first instance found of an actor where the type is T, or null if none exist</returns>
 	public T? Get<T>() where T : class
 	{
 		var list = GetTypesOf<T>();
@@ -181,6 +379,12 @@ public class World : Scene
 		return null;
 	}
 
+	/// <summary>
+	/// Get an instance of an actor of the specified type from the world using a predicate function
+	/// </summary>
+	/// <typeparam name="T">The type to search for</typeparam>
+	/// <param name="predicate">Predicate function that takes an actor of type T and returns whether it matches</param>
+	/// <returns>The first instance found of an actor where the type is T and the predicate matches, or null if none exist</returns>
 	public T? Get<T>(Func<T, bool> predicate) where T : class
 	{
 		var list = GetTypesOf<T>();
@@ -190,17 +394,27 @@ public class World : Scene
 		return null;
 	}
 
+	/// <summary>
+	/// Get all actors of a given type in this world
+	/// </summary>
+	/// <typeparam name="T">Type to search for</typeparam>
+	/// <returns>List of actors matching the type</returns>
 	public List<Actor> All<T>()
 	{
 		return GetTypesOf<T>();
 	}
 
+	/// <summary>
+	/// Gracefully destroy a given actor and remove it from the world
+	/// </summary>
+	/// <param name="actor">The actor instance to destroy</param>
 	public void Destroy(Actor actor)
 	{
 		Debug.Assert(actor.World == this);
 		actor.Destroying = true;
 		destroying.Add(actor);
 	}
+	#endregion
 
 	private List<Actor> GetTypesOf<T>()
 	{
@@ -216,6 +430,7 @@ public class World : Scene
 		return list;
 	}
 
+	#region Update Loop
 	private void ResolveChanges()
 	{
 		// resolve adding/removing actors
@@ -223,7 +438,7 @@ public class World : Scene
 		{
 			// first add group to world
 			int addCount = adding.Count;
-			for (int i = 0; i < addCount; i ++)
+			for (int i = 0; i < addCount; i++)
 			{
 				// sort into buckets
 				var type = adding[i].GetType();
@@ -238,14 +453,17 @@ public class World : Scene
 			}
 
 			// notify they're being added
-			for (int i = 0; i < addCount; i ++)
+			for (int i = 0; i < addCount; i++)
+			{
 				adding[i].Added();
+				ModManager.Instance.OnActorAdded(adding[i]);
+			}
 			adding.RemoveRange(0, addCount);
 
-			for (int i = 0; i < destroying.Count; i ++)
+			foreach (var it in destroying)
 			{
-				var it = destroying[i];
 				it.Destroyed();
+				ModManager.Instance.OnActorDestroyed(it);
 
 				// remove from buckets
 				var type = it.GetType();
@@ -271,124 +489,190 @@ public class World : Scene
 
 	public override void Update()
 	{
-		debugUpdTimer.Restart();
-
-		// update audio
-		Audio.SetListener(Camera);
-
-		// increment playtime (if not in the ending area)
-		if (!IsInEndingArea)
+		if (Paused)
 		{
-			Save.CurrentRecord.Time += TimeSpan.FromSeconds(Time.Delta);
-			Game.Instance.Music.Set("at_baddy", 0);
-		}
-		else
-		{
-			Game.Instance.Music.Set("at_baddy", 1);
-		}
+			pauseMenu.Update();
 
-		// handle strawb counter
-		{
-			// wiggle when gained
-			if (strawbCounterWas != Save.CurrentRecord.Strawberries.Count)
-			{
-				strawbCounterCooldown = 4.0f;
-				strawbCounterWiggle = 1.0f;
-				strawbCounterWas = Save.CurrentRecord.Strawberries.Count;
-			}
-			else
-				Calc.Approach(ref strawbCounterWiggle, 0, Time.Delta / .6f);
-
-			// hold stawb for a while
-			if ((Get<Player>()?.IsStrawberryCounterVisible ?? false))
-				strawbCounterCooldown = 2.0f;
-			else
-				strawbCounterCooldown -= Time.Delta;
-
-			// ease strawb in/out
-			if (IsInEndingArea || Paused || strawbCounterCooldown > 0 || (Get<Player>()?.IsStrawberryCounterVisible ?? false))
-				strawbCounterEase = Calc.Approach(strawbCounterEase, 1, Time.Delta * 6.0f);
-			else
-				strawbCounterEase = Calc.Approach(strawbCounterEase, 0, Time.Delta * 6.0f);
-		}
-
-		// toggle debug draw
-		if (Input.Keyboard.Pressed(Keys.F1))
-			DebugDraw = !DebugDraw;
-		
-		// normal game loop
-		if (!Paused)
-		{
-			// start pause menu
-			if (Controls.Pause.ConsumePress() && IsPauseEnabled)
-			{
-				SetPaused(true);
-				return;
-			}
-
-			// ONLY update the player when dead
-			if (Get<Player>() is Player player && player.Dead)
-			{
-				player.Update();
-				player.LateUpdate();
-				ResolveChanges();
-				return;
-			}
-
-			// ONLY update single cutscene object
-			if (Get<Cutscene>((it) => it.FreezeGame) is Cutscene cs)
-			{
-				cs.Update();
-				cs.LateUpdate();
-				ResolveChanges();
-				return;
-			}
-
-			// pause from hitstun
-			if (HitStun > 0)
-			{
-				HitStun -= Time.Delta;
-				return;
-			}
-
-			GeneralTimer += Time.Delta;
-
-			// add / remove actors
-			ResolveChanges();
-
-			// update all actors
-			var view = Camera.Frustum.GetBoundingBox().Inflate(10);
-			debugUpdateCount = 0;
-			foreach (var actor in Actors)
-				if (actor.UpdateOffScreen || actor.WorldBounds.Intersects(view))
-				{
-					debugUpdateCount++;
-					actor.Update();
-				}
-			foreach (var actor in Actors)
-				if (actor.UpdateOffScreen || actor.WorldBounds.Intersects(view))
-					actor.LateUpdate();
-		}
-		// unpause
-		else
-		{
 			if (Controls.Pause.ConsumePress() || (pauseMenu.IsInMainMenu && Controls.Cancel.ConsumePress()))
 			{
 				pauseMenu.CloseSubMenus();
 				SetPaused(false);
 				Audio.Play(Sfx.ui_unpause);
 			}
-			else
-			{
-				pauseMenu.Update();
-			}
 		}
 
-		debugUpdTimer.Stop();
-	}
+		if (Panicked)
+		{
+			return;
+		} // don't pour salt in wounds
 
+		/* Update timers */
+		RealDelta = Time.Delta;
+		Time.Delta *= TimeScale;
+
+		try
+		{
+			debugUpdTimer.Restart();
+
+			// update audio
+			Audio.SetListener(Camera);
+
+			// increment playtime (if not in the ending area)
+			if (!IsInEndingArea)
+			{
+				Save.CurrentRecord.Time += TimeSpan.FromSeconds(Time.Delta);
+				Game.Instance.Music.Set("at_baddy", 0);
+			}
+			else
+			{
+				Game.Instance.Music.Set("at_baddy", 1);
+			}
+
+			// handle strawb counter
+			{
+				// wiggle when gained
+				if (strawbCounterWas != Save.CurrentRecord.Strawberries.Count)
+				{
+					strawbCounterCooldown = 4.0f;
+					strawbCounterWiggle = 1.0f;
+					strawbCounterWas = Save.CurrentRecord.Strawberries.Count;
+				}
+				else
+					Calc.Approach(ref strawbCounterWiggle, 0, Time.Delta / .6f);
+
+				// hold stawb for a while
+				if ((MainPlayer?.IsStrawberryCounterVisible ?? false))
+					strawbCounterCooldown = 2.0f;
+				else
+					strawbCounterCooldown -= Time.Delta;
+
+				// ease strawb in/out
+				if (IsInEndingArea || Paused || strawbCounterCooldown > 0 || (MainPlayer?.IsStrawberryCounterVisible ?? false))
+					strawbCounterEase = Calc.Approach(strawbCounterEase, 1, Time.Delta * 6.0f);
+				else
+					strawbCounterEase = Calc.Approach(strawbCounterEase, 0, Time.Delta * 6.0f);
+			}
+
+			// toggle debug draw
+			if (Input.Keyboard.Pressed(Keys.F1))
+				DebugDraw = !DebugDraw;
+
+			// normal game loop
+			if (!Paused)
+			{
+				// start pause menu
+				if (Controls.Pause.ConsumePress() && IsPauseEnabled)
+				{
+					SetPaused(true);
+					return;
+				}
+
+				// Fuji Custom
+				// Quick Restart if the player presses the restart button.
+				if (Controls.Restart.ConsumePress() && MainPlayer is { Dead: false } livingPlayer)
+				{
+					SetPaused(false);
+					Audio.StopBus(Sfx.bus_dialog, false);
+					livingPlayer?.Kill();
+					return;
+				}
+
+				// ONLY update the player when dead
+				if (MainPlayer is { Dead: true } player)
+				{
+					player.Update();
+					player.LateUpdate();
+					ResolveChanges();
+					return;
+				}
+
+				// ONLY update single cutscene object
+				if (Get<Cutscene>(it => it.FreezeGame) is { } cs)
+				{
+					cs.Update();
+					cs.LateUpdate();
+					ResolveChanges();
+					return;
+				}
+
+				// pause from hitstun
+				if (HitStun > 0)
+				{
+					HitStun -= Time.Delta;
+					return;
+				}
+
+				GeneralTimer += Time.Delta;
+				RealTimer += RealDelta;
+
+				// add / remove actors
+				ResolveChanges();
+
+				// update all actors
+				var view = Camera.Frustum.GetBoundingBox().Inflate(10);
+				debugUpdateCount = 0;
+				foreach (var actor in Actors)
+					if (actor.UpdateOffScreen || actor.WorldBounds.Intersects(view))
+					{
+						debugUpdateCount++;
+						actor.Update();
+					}
+				foreach (var actor in Actors)
+					if (actor.UpdateOffScreen || actor.WorldBounds.Intersects(view))
+						actor.LateUpdate();
+			}
+
+			debugUpdTimer.Stop();
+		}
+		catch (Exception err)
+		{
+			string currentModName = ModManager.Instance.CurrentLevelMod != null && ModManager.Instance.CurrentLevelMod.ModInfo != null ? ModManager.Instance.CurrentLevelMod.ModInfo.Id : "unknown";
+			LogHelper.Error($"--- ERROR in the map {currentModName}:{Entry.Map}. More details below ---", err);
+
+			Panic(err, $"Oops, critical error :(\n{err.Message}\nYou can try to recover from this error by pressing Retry,\nbut we can't promise stability!", Panicked);
+		} // We wrap most of Update() in a try-catch to hopefully catch errors that occur during gameplay.
+	}
+	#endregion
+
+	#region Gameplay Util Methods
+	/// <summary>
+	/// Set the paused state of this world and run all accompanying procedures
+	/// </summary>
+	/// <param name="paused">Should the world be paused?</param>
 	public void SetPaused(bool paused)
 	{
+		if (paused == false && Panicked)
+		{
+			return;
+		} // dont wanna unpause while in panic state
+
+		if (paused == false)
+		{
+			/* 
+				Player data and settings might've changed, so let's save
+				To prevent spam let's add a delay - 5 seconds should be alright
+			*/
+			if ((RealTimer - PauseSaveDebounce) > 5.0f)
+			{
+				Game.RequestSave();
+				PauseSaveDebounce = RealTimer;
+			}
+
+			if (ModManager.Instance.NeedsReload)
+			{
+				Game.Instance.ReloadAssets(false);
+			}
+
+			var ply = MainPlayer;
+			if (ply != null)
+			{
+				if (ply.Skin != Save.GetSkin())
+				{
+					ply.SetSkin(Save.GetSkin());
+					ModManager.Instance.OnPlayerSkinChange(ply, Save.GetSkin());
+				}
+			}
+		}
 		if (paused != Paused)
 		{
 			Audio.SetBusPaused(Sfx.bus_gameplay, paused);
@@ -399,7 +683,8 @@ public class World : Scene
 				Audio.Play(Sfx.ui_pause);
 				pauseSnapshot = Audio.Play(Sfx.snapshot_pause);
 			}
-			else {
+			else
+			{
 				pauseMenu.Index = 0;
 				pauseSnapshot.Stop();
 			}
@@ -409,6 +694,16 @@ public class World : Scene
 		}
 	}
 
+	/// <summary>
+	/// Run a solid raycast in this world
+	/// </summary>
+	/// <param name="point">Position from which to fire the ray</param>
+	/// <param name="direction">Direction in which the ray should go</param>
+	/// <param name="distance">Maximum distance of the ray from the starting point</param>
+	/// <param name="hit">Returns data relating to this raycast hit</param>
+	/// <param name="ignoreBackfaces">Ignore backfaces of objects? default true</param>
+	/// <param name="ignoreTransparent">Ignore transparent objects? default false</param>
+	/// <returns>Whether the ray hit any object</returns>
 	public bool SolidRayCast(in Vec3 point, in Vec3 direction, float distance, out RayHit hit, bool ignoreBackfaces = true, bool ignoreTransparent = false)
 	{
 		hit = default;
@@ -431,7 +726,7 @@ public class World : Scene
 
 			if (!solid.WorldBounds.Intersects(box))
 				continue;
-				
+
 			var verts = solid.WorldVertices;
 			var faces = solid.WorldFaces;
 
@@ -442,13 +737,13 @@ public class World : Scene
 					continue;
 
 				// ignore faces that are definitely too far away
-				if (Utils.DistanceToPlane(point, face.Plane) > distance)
+				if (point.DistanceToPlane(face.Plane) > distance)
 					continue;
 
 				// check against each triangle in the face
-				for (int i = 0; i < face.VertexCount - 2; i ++)
+				for (int i = 0; i < face.VertexCount - 2; i++)
 				{
-					if (Utils.RayIntersectsTriangle(point, direction, 
+					if (Utils.RayIntersectsTriangle(point, direction,
 						verts[face.VertexStart + 0],
 						verts[face.VertexStart + i + 1],
 						verts[face.VertexStart + i + 2], out float dist))
@@ -479,7 +774,7 @@ public class World : Scene
 		return closest.HasValue;
 	}
 
-	public StackList8<WallHit> SolidWallCheck(in Vec3 point, float radius)
+	public StackList8<WallHit> SolidWallCheck(in Vec3 point, float radius, Func<Solid, bool>? predicate = null)
 	{
 		var radiusSquared = radius * radius;
 		var flatPlane = new Plane(Vec3.UnitZ, point.Z);
@@ -496,6 +791,9 @@ public class World : Scene
 			if (!solid.WorldBounds.Inflate(radius).Contains(point))
 				continue;
 
+			if (predicate != null && !predicate(solid))
+				continue;
+
 			var verts = solid.WorldVertices;
 			var faces = solid.WorldFaces;
 
@@ -506,8 +804,8 @@ public class World : Scene
 				if (face.Plane.Normal.Z <= -1 || face.Plane.Normal.Z >= 1)
 					continue;
 
-				// igore planes that are definitely too far away
-				var distanceToPlane = Utils.DistanceToPlane(point, face.Plane);
+				// ignore planes that are definitely too far away
+				var distanceToPlane = point.DistanceToPlane(face.Plane);
 				if (distanceToPlane < 0 || distanceToPlane > radius)
 					continue;
 
@@ -525,7 +823,7 @@ public class World : Scene
 							continue;
 
 						var pushout = (radius - diff.Length()) * diff.Normalized();
-						if (closestTriangleOnPlane.HasValue && pushout.LengthSquared() < 
+						if (closestTriangleOnPlane.HasValue && pushout.LengthSquared() <
 							closestTriangleOnPlane.Value.Pushout.LengthSquared())
 							continue;
 
@@ -553,9 +851,9 @@ public class World : Scene
 		return hits;
 	}
 
-	public bool SolidWallCheckNearest(in Vec3 point, float radius, out WallHit hit)
+	public bool SolidWallCheckNearest(in Vec3 point, float radius, out WallHit hit, Func<Solid, bool>? predicate = null)
 	{
-		var hits = SolidWallCheck(point, radius);
+		var hits = SolidWallCheck(point, radius, predicate);
 		if (hits.Count > 0)
 		{
 			var closest = hits[0];
@@ -574,9 +872,9 @@ public class World : Scene
 		}
 	}
 
-	public bool SolidWallCheckClosestToNormal(in Vec3 point, float radius, Vec3 normal, out WallHit hit)
+	public bool SolidWallCheckClosestToNormal(in Vec3 point, float radius, Vec3 normal, out WallHit hit, Func<Solid, bool>? predicate = null)
 	{
-		var hits = SolidWallCheck(point, radius);
+		var hits = SolidWallCheck(point, radius, predicate);
 		if (hits.Count > 0)
 		{
 			hit = hits[0];
@@ -628,7 +926,9 @@ public class World : Scene
 		}
 		return null;
 	}
+	#endregion
 
+	#region Render
 	public override void Render(Target target)
 	{
 		debugRndTimer.Restart();
@@ -656,7 +956,7 @@ public class World : Scene
 			foreach (var actor in All<ICastPointShadow>())
 			{
 				var alpha = (actor as ICastPointShadow)!.PointShadowAlpha;
-				if (alpha > 0 && 
+				if (alpha > 0 &&
 					Camera.Frustum.Contains(actor.WorldBounds.Conflate(actor.WorldBounds - Vec3.UnitZ * 1000)))
 					sprites.Add(Sprite.CreateShadowSprite(this, actor.Position + Vec3.UnitZ, alpha));
 			}
@@ -686,7 +986,7 @@ public class World : Scene
 			var shift = new Vec3(Camera.Position.X, Camera.Position.Y, Camera.Position.Z);
 			for (int i = 0; i < skyboxes.Count; i++)
 			{
-				skyboxes[i].Render(Camera, 
+				skyboxes[i].Render(Camera,
 				Matrix.CreateRotationZ(i * GeneralTimer * 0.01f) *
 				Matrix.CreateScale(1, 1, 0.5f) *
 				Matrix.CreateTranslation(shift), 300);
@@ -709,16 +1009,16 @@ public class World : Scene
 
 		// render main models
 		RenderModels(ref state, models, ModelFlags.Default);
-		
+
 		// perform post processing effects
 		ApplyPostEffects();
 
 		// render alpha threshold transparent stuff
-		// {
-		// 	state.CutoutMode = true;
-		// 	RenderModels(ref state, models, ModelFlags.Cutout);
-		// 	state.CutoutMode = false;
-		// }
+		{
+			state.CutoutMode = true;
+			RenderModels(ref state, models, ModelFlags.Cutout);
+			state.CutoutMode = false;
+		}
 
 		// render 2d sprites
 		{
@@ -734,7 +1034,7 @@ public class World : Scene
 		}
 
 		// strawberry collect effect
-		if (Camera.Target != null && models.Any((it) => it.Model.Flags.Has(ModelFlags.StrawberryGetEffect)))
+		if (Camera.Target != null && models.Any(it => it.Model.Flags.Has(ModelFlags.StrawberryGetEffect)))
 		{
 			var img = Assets.Subtextures["splash"];
 			var orig = new Vec2(img.Width, img.Height) / 2;
@@ -742,7 +1042,7 @@ public class World : Scene
 			Camera.Target.Clear(Color.Black, 1, 0, ClearMask.Depth);
 
 			batch.Rect(Camera.Target.Bounds, Color.Black * 0.90f);
-			batch.Image(img, Camera.Target.Bounds.Center, orig, Vec2.One, 0, Color.White);
+			batch.Image(img, Camera.Target.Bounds.Center, orig, Vec2.One * Game.RelativeScale, 0, Color.White);
 			batch.Render(Camera.Target);
 			batch.Clear();
 
@@ -773,7 +1073,7 @@ public class World : Scene
 				var updateMs = debugUpdTimer.Elapsed.TotalMilliseconds;
 				var renderMs = lastDebugRndTime.TotalMilliseconds;
 				var frameMs = debugFpsTimer.Elapsed.TotalMilliseconds;
-				var fps = (int)(1000/frameMs);
+				var fps = (int)(1000 / frameMs);
 				debugFpsTimer.Restart();
 
 				batch.Text(font, $"Draws: {state.Calls}, Tris: {state.Triangles}, Upd: {debugUpdateCount}", bounds.BottomLeft, new Vec2(0, 1), Color.Red);
@@ -783,11 +1083,11 @@ public class World : Scene
 
 			// stats
 			{
-				var at = bounds.TopLeft + new Vec2(4, 8);
-				if (IsInEndingArea || Save.Instance.SpeedrunTimer)
+				var at = bounds.TopLeft + new Vec2(4, 8) * Game.RelativeScale;
+				if (IsInEndingArea || Settings.SpeedrunTimer)
 				{
 					UI.Timer(batch, Save.CurrentRecord.Time, at);
-					at.Y += UI.IconSize + 4;
+					at.Y += UI.IconSize + 4 * Game.RelativeScale;
 				}
 
 				if (strawbCounterEase > 0)
@@ -795,18 +1095,19 @@ public class World : Scene
 					var wiggle = 1 + MathF.Sin(strawbCounterWiggle * MathF.Tau * 2) * strawbCounterWiggle * .3f;
 
 					batch.PushMatrix(
-						Matrix3x2.CreateTranslation(0, -UI.IconSize / 2) * 
-						Matrix3x2.CreateScale(wiggle) * 
+						Matrix3x2.CreateTranslation(0, -UI.IconSize / 2) *
+						Matrix3x2.CreateScale(wiggle) *
 						Matrix3x2.CreateTranslation(at + new Vec2(-60 * (1 - Ease.Cube.Out(strawbCounterEase)), UI.IconSize / 2)));
 					UI.Strawberries(batch, Save.CurrentRecord.Strawberries.Count, Vec2.Zero);
 					batch.PopMatrix();
 				}
 
 				// show version number when paused / in ending area
-				if (IsInEndingArea || Paused)
+				if ((IsInEndingArea || Paused) && pauseMenu.IsInMainMenu)
 				{
-                    UI.Text(batch, Game.VersionString, bounds.BottomLeft + new Vec2(4, -4) * Game.RelativeScale, new Vec2(0, 1), Color.White * 0.25f);
-                }
+					UI.Text(batch, Game.VersionString, bounds.BottomLeft + new Vec2(4, -4) * Game.RelativeScale, new Vec2(0, 1), Color.CornflowerBlue * 0.75f);
+					UI.Text(batch, Game.LoaderVersion, bounds.BottomLeft + new Vec2(4, -24) * Game.RelativeScale, new Vec2(0, 1), new Color(12326399) * 0.75f);
+				}
 			}
 
 			// overlay
@@ -814,7 +1115,7 @@ public class World : Scene
 				var scroll = -new Vec2(1.25f, 0.9f) * (float)(Time.Duration.TotalSeconds) * 0.05f;
 
 				batch.PushBlend(BlendMode.Add);
-				batch.Image(Assets.Textures["overworld/overlay"], 
+				batch.Image(Assets.Textures["overworld/overlay"],
 					bounds.TopLeft, bounds.TopRight, bounds.BottomRight, bounds.BottomLeft,
 					scroll + new Vec2(0, 0), scroll + new Vec2(1, 0), scroll + new Vec2(1, 1), scroll + new Vec2(0, 1),
 					Color.White * 0.10f);
@@ -834,7 +1135,7 @@ public class World : Scene
 		// perform post processing effects
 		if (Camera.Target != null)
 		{
-			if (postTarget == null || postTarget.Width < Camera.Target.Width || postTarget.Height < Camera.Target.Height)
+			if (postTarget == null || postTarget.Width != Camera.Target.Width || postTarget.Height != Camera.Target.Height)
 			{
 				postTarget?.Dispose();
 				postTarget = new(Camera.Target.Width, Camera.Target.Height);
@@ -845,12 +1146,12 @@ public class World : Scene
 
 			// apply post fx
 			postMaterial.SetShader(Assets.Shaders["Edge"]);
-            if (postMaterial.Shader?.Has("u_depth") ?? false)
-			    postMaterial.Set("u_depth", Camera.Target.Attachments[1]);
-            if (postMaterial.Shader?.Has("u_pixel") ?? false)
-			    postMaterial.Set("u_pixel", new Vec2(1.0f / postCam.Target.Width, 1.0f / postCam.Target.Height));
-            if (postMaterial.Shader?.Has("u_edge") ?? false)
-			    postMaterial.Set("u_edge", new Color(0x110d33));
+			if (postMaterial.Shader?.Has("u_depth") ?? false)
+				postMaterial.Set("u_depth", Camera.Target.Attachments[1]);
+			if (postMaterial.Shader?.Has("u_pixel") ?? false)
+				postMaterial.Set("u_pixel", new Vec2(1.0f / postCam.Target.Width * Game.RelativeScale, 1.0f / postCam.Target.Height * Game.RelativeScale));
+			if (postMaterial.Shader?.Has("u_edge") ?? false)
+				postMaterial.Set("u_edge", new Color(0x110d33));
 			batch.PushMaterial(postMaterial);
 			batch.Image(Camera.Target.Attachments[0], Color.White);
 			batch.Render(postTarget);
@@ -873,5 +1174,23 @@ public class World : Scene
 			state.ModelMatrix = it.Model.Transform * it.Actor.Matrix;
 			it.Model.Render(ref state);
 		}
+	}
+	#endregion
+
+	private void Panic(Exception error, string reason, bool level)
+	{
+		if (level)
+		{
+			throw error;
+		}
+
+		Audio.Play(Sfx.main_menu_restart_cancel);
+
+		Panicked = true;
+		badMapWarningMenu.Title = reason;
+
+		// this is hacky but preferred over writing even more code to handle this specific state
+		pauseMenu = badMapWarningMenu;
+		SetPaused(true);
 	}
 }

@@ -1,44 +1,43 @@
-﻿
-namespace Celeste64;
+﻿namespace Celeste64;
 
 public class GateBlock(Vec3 end) : Solid
 {
-	public const float Acceleration = 400;
-	public const float MaxSpeed = 200;
+	public virtual float Acceleration => 400;
+	public virtual float MaxSpeed => 200;
 
 	public Vec3 Start;
 	public Vec3 End = end;
-	private bool opened;
-	private Sound? sfx;
+	public bool Opened;
+	public Sound? Sfx;
 
-	private readonly Routine routine = new();
+	public readonly Routine Routine = new();
 
-    public override void Added()
-    {
-		sfx = World.Add(new Sound(this, Sfx.sfx_touch_switch_gate_open_move));
+	public override void Added()
+	{
+		Sfx = World.Add(new Sound(this, Celeste64.Sfx.sfx_touch_switch_gate_open_move));
 		UpdateOffScreen = true;
 		Start = Position;
-    }
+	}
 
 	public override void Update()
 	{
 		base.Update();
 
-		if (!opened && !Coin.AnyRemaining(World))
+		if (!Opened && !Coin.AnyRemaining(World))
 		{
-			opened = true;
-			routine.Run(Sequence());
+			Opened = true;
+			Routine.Run(Sequence());
 		}
-		else if (routine.IsRunning)
+		else if (Routine.IsRunning)
 		{
-			routine.Update();
+			Routine.Update();
 		}
 	}
 
-	private CoEnumerator Sequence()
+	public virtual CoEnumerator Sequence()
 	{
 		TShake = .2f;
-		sfx?.Resume();
+		Sfx?.Resume();
 		yield return .2f;
 
 		var normal = (End - Position).Normalized();
@@ -48,12 +47,11 @@ public class GateBlock(Vec3 end) : Solid
 			yield return Co.SingleFrame;
 		}
 
-		Audio.Play(Sfx.sfx_touch_switch_gate_finish, Position);
-		sfx?.Stop();
-		sfx = null;
+		Audio.Play(Celeste64.Sfx.sfx_touch_switch_gate_finish, Position);
+		Sfx?.Stop();
+		Sfx = null;
 		Velocity = Vec3.Zero;
 		MoveTo(End);
 		TShake = .2f;
 	}
-
 }

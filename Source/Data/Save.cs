@@ -1,115 +1,36 @@
-
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using Celeste64.Mod;
 
 namespace Celeste64;
 
-public class Save
+public sealed class Save
 {
-	public const string FileName = "save.json";
+	public const string DefaultFileName = "save.json";
 
-	public enum InvertCameraOptions
-	{
-		None,
-		X,
-		Y,
-		Both
-	}
-
-	/// <summary>
-	/// Stored data associated with a single level
-	/// </summary>
-	public class LevelRecord
-	{
-		public string ID { get; set; } = string.Empty;
-		public string Checkpoint { get; set; } = string.Empty;
-		public HashSet<string> Strawberries { get; set; } = [];
-		public HashSet<string> CompletedSubMaps { get; set; } = [];
-		public Dictionary<string, int> Flags { get; set; } = []; 
-		public int Deaths { get; set; } = 0;
-		public TimeSpan Time { get; set; } = new();
-
-		public int GetFlag(string name, int defaultValue = 0) 
-			=> Flags.TryGetValue(name, out int value) ? value : defaultValue;
-
-		public int SetFlag(string name, int value = 1) 
-			=> Flags[name] = value;
-
-		public int IncFlag(string name) 
-			=> Flags[name] = GetFlag(name) + 1;
-	}
-
-	public static Save Instance = new();
+	public static Save_V02 Instance = new();
 
 	/// <summary>
 	/// Gets the Record for the current Level.
 	/// </summary>
-	public static LevelRecord CurrentRecord => Instance.GetOrMakeRecord(Instance.LevelID);
-
-	/// <summary>
-	/// The last level that was entered
-	/// </summary>
-	public string LevelID { get; set; } = "NONE";
-
-	/// <summary>
-	/// If Fullscreen should be enabled
-	/// </summary>
-	public bool Fullscreen { get; set; } = true;
-
-	/// <summary>
-	/// If the Vertical Z Guide should be drawn below the Player
-	/// </summary>
-	public bool ZGuide { get; set; } = true;
-
-	/// <summary>
-	/// If the Speedrun Timer should be visible while playing
-	/// </summary>
-	public bool SpeedrunTimer { get; set; } = false;
-
-	/// <summary>
-	/// 0-10 Music volume level
-	/// </summary>
-	public int MusicVolume { get; set; } = 10;
-
-	/// <summary>
-	/// 0-10 Sfx Volume level
-	/// </summary>
-	public int SfxVolume { get; set; } = 10;
-
-	/// <summary>
-	/// Invert the camera in given directions
-	/// </summary>
-	public InvertCameraOptions InvertCamera { get; set; } = InvertCameraOptions.None;
-
-	/// <summary>
-	/// Current Language ID
-	/// </summary>
-	public string Language { get; set; } = "english";
-
-	/// <summary>
-	/// Records for each level
-	/// </summary>
-	public List<LevelRecord> Records { get; set; } = [];
-
+	public static LevelRecord_V01 CurrentRecord => GetOrMakeRecord(Instance.LevelID);
 	/// <summary>
 	/// Finds the record associated with a specific level, or adds it if not found
 	/// </summary>
-	public LevelRecord GetOrMakeRecord(string levelID)
+	public static LevelRecord_V01 GetOrMakeRecord(string levelID)
 	{
 		if (TryGetRecord(levelID) is { } record)
 			return record;
 
-		record = new LevelRecord() { ID = levelID };
-		Records.Add(record);
+		record = new LevelRecord_V01() { ID = levelID };
+		Instance.Records.Add(record);
 		return record;
 	}
 
 	/// <summary>
 	/// Tries to get a Level Record, returns null if not found
 	/// </summary>
-	public LevelRecord? TryGetRecord(string levelID)
+	public static LevelRecord_V01? TryGetRecord(string levelID)
 	{
-		foreach (var record in Records)
+		foreach (var record in Instance.Records)
 			if (record.ID == levelID)
 				return record;
 		return null;
@@ -118,97 +39,111 @@ public class Save
 	/// <summary>
 	/// Erases a Level Record
 	/// </summary>
-	public void EraseRecord(string levelID)
+	public static void EraseRecord(string levelID)
 	{
-		for (int i = 0; i < Records.Count; i ++)
+		for (int i = 0; i < Instance.Records.Count; i++)
 		{
-			if (Records[i].ID == levelID)
+			if (Instance.Records[i].ID == levelID)
 			{
-				Records.RemoveAt(i);
+				Instance.Records.RemoveAt(i);
 				break;
 			}
 		}
 	}
 
-	public void ToggleFullscreen()
+	/// <summary>
+	/// Finds the record associated with a specific mod, or adds it if not found
+	/// </summary>
+	public static ModRecord_V02 GetOrMakeMod(string modID)
 	{
-		Fullscreen = !Fullscreen;
-		SyncSettings();
+		if (TryGetMod(modID) is { } record)
+			return record;
+
+		record = new ModRecord_V02() { ID = modID };
+		Instance.ModRecords.Add(record);
+		return record;
 	}
 
-	public void ToggleZGuide()
+	/// <summary>
+	/// Tries to get a Mod Record, returns null if not found
+	/// </summary>
+	public static ModRecord_V02? TryGetMod(string modID)
 	{
-		ZGuide = !ZGuide;
+		foreach (var record in Instance.ModRecords)
+			if (record.ID == modID)
+				return record;
+		return null;
 	}
 
-	public void SetCameraInverted(InvertCameraOptions value)
+	/// <summary>
+	/// Erases a Mod Record
+	/// </summary>
+	public static void EraseModRecord(string modID)
 	{
-		InvertCamera = value;
+		for (int i = 0; i < Instance.ModRecords.Count; i++)
+		{
+			if (Instance.ModRecords[i].ID == modID)
+			{
+				Instance.ModRecords.RemoveAt(i);
+				break;
+			}
+		}
 	}
 
-	public void ToggleTimer()
+	public static void SetSkinName(string skin)
 	{
-		SpeedrunTimer = !SpeedrunTimer;
+		Instance.SkinName = skin;
 	}
 
-	public void SetMusicVolume(int value)
+	public static SkinInfo GetSkin()
 	{
-		MusicVolume = Calc.Clamp(value, 0, 10);
-		SyncSettings();
+		return Assets.EnabledSkins.FirstOrDefault(s => s.Name == Instance.SkinName) ??
+			ModManager.Instance.VanillaGameMod?.Skins.FirstOrDefault() ??
+			new SkinInfo
+			{
+				Name = "Madeline",
+				Model = "player",
+				HideHair = false,
+				HairNormal = 0xdb2c00,
+				HairNoDash = 0x6ec0ff,
+				HairTwoDash = 0xfa91ff,
+				HairRefillFlash = 0xffffff,
+				HairFeather = 0xf2d450
+			};
 	}
 
-	public void SetSfxVolume(int value)
+	internal static void SaveToFile()
 	{
-		SfxVolume = Calc.Clamp(value, 0, 10);
-		SyncSettings();
-	}
-
-	public void SyncSettings()
-	{
-		App.Fullscreen = Fullscreen;
-		Audio.SetVCAVolume("vca:/music", Calc.Clamp(MusicVolume / 10.0f, 0, 1));
-		Audio.SetVCAVolume("vca:/sfx", Calc.Clamp(SfxVolume / 10.0f, 0, 1));
-	}
-
-	public void SaveToFile()
-	{
-		var savePath = Path.Join(App.UserPath, FileName);
-		var tempPath = Path.Join(App.UserPath, FileName + ".backup");
+		var savePath = Path.Join(App.UserPath, Instance.FileName);
+		var tempPath = Path.Join(App.UserPath, Instance.FileName + ".backup");
 
 		// first save to a temporary file
 		{
 			using var stream = File.Create(tempPath);
-			Serialize(stream, this);
+			Instance.Serialize(stream, Instance);
 			stream.Flush();
 		}
 
-		// validate that the temp path worked, and overwride existing if it did.
+		// validate that the temp path worked, and overwrite existing if it did.
 		if (File.Exists(tempPath) &&
-			Deserialize(File.ReadAllText(tempPath)) != null)
+			Instance.Deserialize<Save_V02>(File.ReadAllText(tempPath)) != null)
 		{
 			File.Copy(tempPath, savePath, true);
 		}
 	}
 
-	public static void Serialize(Stream stream, Save instance)
+	internal static void LoadSaveByFileName(string fileName)
 	{
-		JsonSerializer.Serialize(stream, instance, SaveContext.Default.Save);
-	}
+		/* Loading while a save task is occuring would be terrible */
+		if (Game.Instance.SavingState != SavingState.Ready) return;
 
-	public static Save? Deserialize(string data)
-	{
-		try
-		{
-			return JsonSerializer.Deserialize(data, SaveContext.Default.Save);
-		}
-		catch (Exception e)
-		{
-			Log.Error(e.ToString());
-			return null;
-		}
+		if (fileName == string.Empty) fileName = DefaultFileName;
+		var saveFile = Path.Join(App.UserPath, fileName);
+
+		if (File.Exists(saveFile))
+			Instance = Instance.Deserialize<Save_V02>(File.ReadAllText(saveFile)) ?? new();
+		else
+			Instance = new();
+		Instance.FileName = fileName;
 	}
 }
-
-[JsonSourceGenerationOptions(WriteIndented = true, AllowTrailingCommas = true, UseStringEnumConverter = true)]
-[JsonSerializable(typeof(Save))]
-internal partial class SaveContext : JsonSerializerContext {}

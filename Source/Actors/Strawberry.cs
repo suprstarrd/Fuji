@@ -1,4 +1,3 @@
-
 namespace Celeste64;
 
 public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointShadow
@@ -6,26 +5,26 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 	public SkinnedModel Model;
 	public ParticleSystem Particles;
 
-	public float Pulse => Calc.ClampedMap(World.GeneralTimer % 3, 0, 0.25f, 0, 1);
+	public virtual float Pulse => Calc.ClampedMap(World.GeneralTimer % 3, 0, 0.25f, 0, 1);
 	public float PickupRadius => 12;
-	
-	public bool IsCollected => 
-		!string.IsNullOrEmpty(ID) && 
+
+	public virtual bool IsCollected =>
+		!string.IsNullOrEmpty(ID) &&
 		Save.CurrentRecord.Strawberries.Contains(ID);
 
 	public Color HaloColor = 0xeed14f;
-	public float PointShadowAlpha { get; set; } = 1.0f;
+	public virtual float PointShadowAlpha { get; set; } = 1.0f;
 
-	public bool IsLocked { get; private set; }
+	public virtual bool IsLocked { get; protected set; }
 	public readonly string ID;
 	public readonly string UnlockConditionGroup;
 	public readonly Vec3? BubbleTo;
 	public readonly bool PlayUnlockSound;
 
-	private bool isCollecting = false;
-	private readonly List<Actor> unlockConditions = [];
-	private float checkConditionsOffset;
-	private float scaleMultiplier = 1;
+	public bool IsCollecting = false;
+	public readonly List<Actor> UnlockConditions = [];
+	public float CheckConditionsOffset;
+	public float ScaleMultiplier = 1;
 
 	public Strawberry(string id, bool isLocked, string? unlockCondition, bool unlockSound, Vec3? bubbleTo)
 	{
@@ -34,8 +33,7 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 		UnlockConditionGroup = unlockCondition ?? string.Empty;
 		PlayUnlockSound = unlockSound;
 		BubbleTo = bubbleTo;
-		Model = new(Assets.Models["strawberry"]);
-		Model.Transform = Matrix.CreateScale(3);
+		Model = new(Assets.Models["strawberry"]) { Transform = Matrix.CreateScale(3) };
 		Model.Materials[0].Effects = 0;
 		LocalBounds = new BoundingBox(Vec3.Zero, 10);
 		Particles = new(32, new ParticleTheme()
@@ -46,7 +44,7 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 			Gravity = new Vec3(0, 0, 80),
 			Size = 1.2f
 		});
-		
+
 	}
 
 	public override void Added()
@@ -59,13 +57,13 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 			foreach (var actor in World.All<IUnlockStrawberry>())
 			{
 				if (actor.GroupName == UnlockConditionGroup)
-					unlockConditions.Add(actor);
+					UnlockConditions.Add(actor);
 			}
 
-			if (unlockConditions.Count <= 0)
+			if (UnlockConditions.Count <= 0)
 				IsLocked = false;
 
-			checkConditionsOffset = World.Rng.Float();
+			CheckConditionsOffset = World.Rng.Float();
 			PointShadowAlpha = 0;
 		}
 
@@ -76,10 +74,10 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 	{
 		if (IsLocked)
 		{
-			if (Time.OnInterval(0.1f, checkConditionsOffset))
+			if (Time.OnInterval(0.1f, CheckConditionsOffset))
 			{
 				bool ready = true;
-				foreach (var it in unlockConditions)
+				foreach (var it in UnlockConditions)
 				{
 					if (it.Alive && !(it as IUnlockStrawberry)!.Satisfied)
 						ready = false;
@@ -96,17 +94,17 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 
 		PointShadowAlpha = IsCollected ? 0.5f : 1.0f;
 
-		if (!IsCollected || isCollecting)
+		if (!IsCollected || IsCollecting)
 		{
 			Particles.SpawnParticle(
 				Position + new Vec3(6 - World.Rng.Float() * 12, 6 - World.Rng.Float() * 12, 6 - World.Rng.Float() * 12),
-				new Vec3(0,0,0), 1);
+				new Vec3(0, 0, 0), 1);
 			Particles.Update(Time.Delta);
 		}
 		else
 		{
 			Model.MakeMaterialsUnique();
-			Model.Flags = ModelFlags.Transparent;	
+			Model.Flags = ModelFlags.Transparent;
 
 			foreach (var mat in Model.Materials)
 			{
@@ -116,7 +114,7 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 		}
 	}
 
-	public void CollectSprites(List<Sprite> populate)
+	public virtual void CollectSprites(List<Sprite> populate)
 	{
 		if (IsCollected || IsLocked)
 			return;
@@ -135,16 +133,16 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 		Particles.CollectSprites(Position, World, populate);
 	}
 
-	public void CollectModels(List<(Actor Actor, Model Model)> populate)
+	public virtual void CollectModels(List<(Actor Actor, Model Model)> populate)
 	{
 		if (!IsLocked)
 		{
 			var scale = 3.0f;
-			if (!IsCollected && !isCollecting)
+			if (!IsCollected && !IsCollecting)
 				scale += Ease.Back.In(Ease.UpDown(Pulse)) * 0.50f;
-			scale *= scaleMultiplier;
+			scale *= ScaleMultiplier;
 
-			if (isCollecting)
+			if (IsCollecting)
 			{
 				Model.Transform =
 					Matrix.CreateScale(scale);
@@ -161,17 +159,17 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 		}
 	}
 
-	public void Pickup(Player player)
+	public virtual void Pickup(Player player)
 	{
-		if (!IsCollected && !isCollecting && !IsLocked)
+		if (!IsCollected && !IsCollecting && !IsLocked)
 		{
 			Audio.Play(World.Entry.Submap ? Sfx.sfx_collect_strawb_bside : Sfx.sfx_collect_strawb, Position);
-			isCollecting = true;
+			IsCollecting = true;
 			player.StrawbGet(this);
 		}
 	}
 
-	private CoEnumerator UnlockRoutine(Cutscene cs)
+	public virtual CoEnumerator UnlockRoutine(Cutscene cs)
 	{
 		var wasLookAt = World.Camera.LookAt;
 		var wasPosition = World.Camera.Position;
@@ -204,11 +202,11 @@ public class Strawberry : Actor, IHaveModels, IHaveSprites, IPickup, ICastPointS
 
 		for (float t = 0; t < 1; t += Time.Delta / .8f)
 		{
-			scaleMultiplier = 1 + MathF.Sin(t * MathF.Tau * 3) * .3f * (1 - t);
+			ScaleMultiplier = 1 + MathF.Sin(t * MathF.Tau * 3) * .3f * (1 - t);
 			yield return Co.SingleFrame;
 		}
 
-		scaleMultiplier = 1;
+		ScaleMultiplier = 1;
 		yield return .7f;
 
 		World.Camera.LookAt = wasLookAt;

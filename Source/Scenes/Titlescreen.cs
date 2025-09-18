@@ -1,4 +1,3 @@
-
 namespace Celeste64;
 
 public class Titlescreen : Scene
@@ -15,8 +14,8 @@ public class Titlescreen : Scene
 		Music = "event:/music/mus_title";
 	}
 
-    public override void Update()
-    {
+	public override void Update()
+	{
 		easing = Calc.Approach(easing, 1, Time.Delta / 5.0f);
 		inputDelay = Calc.Approach(inputDelay, 0, Time.Delta);
 
@@ -32,14 +31,20 @@ public class Titlescreen : Scene
 			});
 		}
 
+		if (Input.Keyboard.CtrlOrCommand && !Game.Instance.IsMidTransition && Settings.EnableQuickStart)
+		{
+			var entry = new Overworld.Entry(Assets.Levels[0], null);
+			entry.Level.Enter();
+		}
+
 		if (Controls.Cancel.Pressed)
 		{
 			App.Exit();
 		}
-    }
+	}
 
-    public override void Render(Target target)
-    {
+	public override void Render(Target target)
+	{
 		target.Clear(Color.Black, 1, 0, ClearMask.All);
 
 		var camFrom = new Vec3(0, -200, 60);
@@ -59,8 +64,8 @@ public class Titlescreen : Scene
 		var state = new RenderState()
 		{
 			Camera = camera,
-			ModelMatrix = 
-				Matrix.Identity * 
+			ModelMatrix =
+				Matrix.Identity *
 				Matrix.CreateScale(10) *
 				Matrix.CreateRotationX(wobble.Y) *
 				Matrix.CreateRotationZ(wobble.X) *
@@ -85,13 +90,13 @@ public class Titlescreen : Scene
 
 			batch.PushBlend(BlendMode.Add);
 			batch.PushSampler(new TextureSampler(TextureFilter.Linear, TextureWrap.Repeat, TextureWrap.Repeat));
-			batch.Image(Assets.Textures["overworld/overlay"], 
+			batch.Image(Assets.Textures["overworld/overlay"],
 				bounds.TopLeft, bounds.TopRight, bounds.BottomRight, bounds.BottomLeft,
 				scroll + new Vec2(0, 0), scroll + new Vec2(1, 0), scroll + new Vec2(1, 1), scroll + new Vec2(0, 1),
 				Color.White * 0.10f);
 			batch.PopSampler();
 			batch.PopBlend();
-			batch.Image(Assets.Textures["overworld/vignette"], 
+			batch.Image(Assets.Textures["overworld/vignette"],
 				bounds.TopLeft, bounds.TopRight, bounds.BottomRight, bounds.BottomLeft,
 				new Vec2(0, 0), new Vec2(1, 0), new Vec2(1, 1), new Vec2(0, 1),
 				Color.White * 0.30f);
@@ -101,8 +106,10 @@ public class Titlescreen : Scene
 				var at = bounds.BottomRight + new Vec2(-16, -4) * Game.RelativeScale + new Vec2(0, -UI.PromptSize);
 				UI.Prompt(batch, Controls.Cancel, Loc.Str("Exit"), at, out var width, 1.0f);
 				at.X -= width + 8 * Game.RelativeScale;
+
 				UI.Prompt(batch, Controls.Confirm, Loc.Str("Confirm"), at, out _, 1.0f);
-				UI.Text(batch, Game.VersionString, bounds.BottomLeft + new Vec2(4, -4) * Game.RelativeScale, new Vec2(0, 1), Color.White * 0.25f);
+				UI.Text(batch, Game.VersionString, bounds.BottomLeft + new Vec2(4, -4) * Game.RelativeScale, new Vec2(0, 1), Color.CornflowerBlue * 0.75f);
+				UI.Text(batch, Game.LoaderVersion, bounds.BottomLeft + new Vec2(4, -24) * Game.RelativeScale, new Vec2(0, 1), new Color(12326399) * 0.75f);
 			}
 
 			if (easing < 1)
@@ -115,5 +122,5 @@ public class Titlescreen : Scene
 			batch.Render(target);
 			batch.Clear();
 		}
-    }
+	}
 }

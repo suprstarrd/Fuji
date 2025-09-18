@@ -1,0 +1,10 @@
+{
+    "Model": "badeline",
+    "HideHair": false,
+    "Name": "Badeline",
+    "HairNormal" : "9B3FB5",
+    "HairNoDash" : "6EC0FF",
+    "HairTwoDash" : "FA91FF",
+    "HairRefillFlash" : "FFFFFF",
+    "HairFeather" : "F2D450"
+}
