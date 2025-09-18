@@ -6,18 +6,75 @@ namespace Celeste64;
 
 public class World : Scene
 {
-	public enum EntryReasons { Entered, Returned, Respawned }
+	#region Properties
+	/// <summary>
+	/// Entry reasons of a World instance
+	/// </summary>
+	public enum EntryReasons
+	{
+		/// <summary>
+		/// The player likely entered this world from the overworld screen
+		/// </summary>
+		Entered,
+		/// <summary>
+		/// The player is returning here from another world
+		/// </summary>
+		Returned,
+		/// <summary>
+		/// The player respawned here after death
+		/// </summary>
+		Respawned
+	}
 	public readonly record struct EntryInfo(string Map, string CheckPoint, bool Submap, EntryReasons Reason);
 
+	/// <summary>
+	/// The current camera of this world
+	/// </summary>
 	public Camera Camera = new();
+	/// <summary>
+	/// RNG manager of the world
+	/// </summary>
 	public Rng Rng = new(0);
+	/// <summary>
+	/// Represents how much longer the current hit stun will last in seconds
+	/// </summary>
 	public float HitStun = 0;
+	/// <summary>
+	/// Whether the game is currently paused
+	/// </summary>
 	public bool Paused = false;
+	/// <summary>
+	/// The entry reason of this world
+	/// </summary>
 	public EntryInfo Entry = new();
 	public readonly GridPartition<Solid> SolidGrid = new(200, 100);
+
+	/// <summary>
+	/// Total amount of time spent in this world so far. Affected by <see cref="World.TimeScale">timescale</see>.
+	/// For a realtime alternative see <see cref="World.RealTimer">RealTimer</see>
+	/// </summary>
 	public float GeneralTimer = 0;
+	/// <summary>
+	/// The total amount of time spent in this world so far, unaffected by timescale.
+	/// </summary>
+	public float RealTimer = 0;
+	/// <summary>
+	/// The current delta time unaffected by timescale. For a timescale-friendly alternative see <see cref="Time.Delta">Time.Delta</see>
+	/// </summary>
+	public float RealDelta = 0;
+	/// <summary>
+	/// The timescale of the world, where a value of 1 represents 100% and 0.1 represents 10%
+	/// </summary>
+	public float TimeScale = 1;
+
+	/// <summary>
+	/// Altitude at which the player will automatically die
+	/// </summary>
 	public float DeathPlane = -100;
 
+	/// <summary>
+	/// List of actors currently in this world
+	/// </summary>
 	public readonly List<Actor> Actors = [];
 	private readonly List<Actor> adding = [];
 	private readonly List<Actor> destroying = [];
@@ -37,6 +94,7 @@ public class World : Scene
 	// Pause Menu, only drawn when actually paused
 	private Menu pauseMenu = new();
 	private AudioHandle pauseSnapshot;
+	private float PauseSaveDebounce = 0;
 
 	// Panic menu
 	private Menu badMapWarningMenu = new();
@@ -48,13 +106,13 @@ public class World : Scene
 	private float strawbCounterEase = 0;
 	private int strawbCounterWas;
 
-	private bool IsInEndingArea => Get<Player>() is { } player && Overlaps<EndingArea>(player.Position);
+	private bool IsInEndingArea => MainPlayer is { } player && Overlaps<EndingArea>(player.Position);
 	private bool IsPauseEnabled
 	{
 		get
 		{
 			if (Game.Instance.IsMidTransition) return false;
-			if (Get<Player>() is not { } player) return true;
+			if (MainPlayer is not { } player) return true;
 			return player.IsAbleToPause;
 		}
 	}
@@ -66,8 +124,17 @@ public class World : Scene
 	private int debugUpdateCount;
 	public static bool DebugDraw { get; private set; } = false;
 
+	/// <summary>
+	/// The original data of this world's map, read-only
+	/// </summary>
 	public Map? Map { get; private set; }
+	/// <summary>
+	/// Current active player of this world instance
+	/// </summary>
+	public Player? MainPlayer;
+	#endregion
 
+	#region Constructor
 	public World(EntryInfo entry)
 	{
 		badMapWarningMenu.Title = $"placeholder";
@@ -85,11 +152,10 @@ public class World : Scene
 
 		badMapWarningMenu.Add(new Menu.Option("FujiOpenLogFile", () =>
 		{
-			Game.WriteToLog();
-			Game.OpenLog();
+			LogHelper.OpenLog();
 		}));
 
-		badMapWarningMenu.Add(new Menu.Option("Exit", () => Game.Instance.Goto(new Transition()
+		badMapWarningMenu.Add(new Menu.Option("QuitToMainMenu", () => Game.Instance.Goto(new Transition()
 		{
 			Mode = Transition.Modes.Replace,
 			Scene = () => new Overworld(true),
@@ -105,7 +171,7 @@ public class World : Scene
 
 		if (Assets.Maps.ContainsKey(entry.Map) == false)
 		{
-			Panic($"Sorry, the map {entry.Map} does not exist.\nCheck your mod's Levels.json and Maps folder.");
+			Panic(new Exception(), $"Sorry, the map {entry.Map} does not exist.\nCheck your mod's Levels.json and Maps folder.", Panicked);
 
 			return;
 		}
@@ -115,7 +181,7 @@ public class World : Scene
 
 		if (Map.isMalformed == true)
 		{
-			Panic($"Sorry, the map {entry.Map} appears to be broken/corrupted\nIt failed to load because:\n{Map.readExceptionMessage}\nMore information may be available in the logs.");
+			Panic(new Exception(), $"Sorry, the map {entry.Map} appears to be broken/corrupted\nIt failed to load because:\n{Map.readExceptionMessage}\nMore information may be available in the logs.", Panicked);
 
 			return;
 		}
@@ -135,7 +201,7 @@ public class World : Scene
 
 			var modMenu = new ModSelectionMenu(pauseMenu)
 			{
-				Title = "Mods Menu"
+				Title = Loc.Str("PauseModsMenu")
 			};
 
 			pauseMenu.Title = Loc.Str("PauseTitle");
@@ -147,7 +213,7 @@ public class World : Scene
 			{
 				SetPaused(false);
 				Audio.StopBus(Sfx.bus_dialog, false);
-				Get<Player>()?.Kill();
+				MainPlayer?.Kill();
 			}));
 			if (Assets.EnabledSkins.Count > 1)
 			{
@@ -155,11 +221,11 @@ public class World : Scene
 					() => Assets.EnabledSkins.Select(x => x.Name).ToList(),
 					0,
 					() => Assets.EnabledSkins.Count,
-					() => Save.Instance.GetSkin().Name, Save.Instance.SetSkinName)
+					() => Save.GetSkin().Name, Save.SetSkinName)
 				);
 			}
 			pauseMenu.Add(new Menu.Submenu("PauseOptions", pauseMenu, optionsMenu));
-			pauseMenu.Add(new Menu.Submenu("Mods", pauseMenu, modMenu));
+			pauseMenu.Add(new Menu.Submenu("PauseModsMenu", pauseMenu, modMenu));
 			pauseMenu.Add(new Menu.Option("PauseSaveQuit", () => Game.Instance.Goto(new Transition()
 			{
 				Mode = Transition.Modes.Replace,
@@ -167,7 +233,7 @@ public class World : Scene
 				FromPause = true,
 				ToPause = true,
 				ToBlack = new SlideWipe(),
-				PerformAssetReload = Game.Instance.NeedsReload,
+				PerformAssetReload = ModManager.Instance.NeedsReload,
 				Saving = true
 			})));
 		}
@@ -224,9 +290,21 @@ public class World : Scene
 
 		ModManager.Instance.OnWorldLoaded(this);
 
-		Log.Info($"Loaded Map '{Entry.Map}' in {stopwatch.ElapsedMilliseconds}ms");
+		if (Entry.Reason == EntryReasons.Entered)
+		{
+			Log.Info($"Strawb Count: {adding.Where(x => x is Strawberry).Count()}");
+			Log.Info($"Loaded Map '{ModManager.Instance.CurrentLevelMod?.ModInfo.Id}:{Entry.Map}' in {stopwatch.ElapsedMilliseconds}ms");
+		}
+		else
+		{
+			LogHelper.Verbose($"Respawned in {stopwatch.ElapsedMilliseconds}ms");
+		}
 	}
+	#endregion
 
+	/// <summary>
+	/// Ran when the world is being disposed (e.g. player is leaving to the overworld screen)
+	/// </summary>
 	public override void Disposed()
 	{
 		SetPaused(false);
@@ -243,6 +321,23 @@ public class World : Scene
 		ModManager.Instance.CurrentLevelMod = null;
 	}
 
+	/// <summary>
+	/// Ran when the world is entered
+	/// </summary>
+	public override void Entered()
+	{
+		if (MainPlayer is { } player)
+		{
+			player.SetSkin(Save.GetSkin());
+		}
+	}
+
+	#region Public Actor Methods
+	/// <summary>
+	/// Request an instance of an actor type from this world's recycling pool
+	/// </summary>
+	/// <typeparam name="T">The type of the entity to search for</typeparam>
+	/// <returns>Instance of Actor where the type is T, pulled from the recycling pool or constructed if there is none</returns>
 	public T Request<T>() where T : Actor, IRecycle, new()
 	{
 		if (recycled.TryGetValue(typeof(T), out var list) && list.Count > 0)
@@ -255,6 +350,12 @@ public class World : Scene
 		}
 	}
 
+	/// <summary>
+	/// Add an instance of an actor to this world
+	/// </summary>
+	/// <typeparam name="T">Type of the actor to add</typeparam>
+	/// <param name="instance">The instance to be added</param>
+	/// <returns>The newly added actor where the type is T</returns>
 	public T Add<T>(T instance) where T : Actor
 	{
 		adding.Add(instance);
@@ -265,6 +366,11 @@ public class World : Scene
 		return instance;
 	}
 
+	/// <summary>
+	/// Get an instance of an actor of the specified type from the world
+	/// </summary>
+	/// <typeparam name="T">The type to search for</typeparam>
+	/// <returns>The first instance found of an actor where the type is T, or null if none exist</returns>
 	public T? Get<T>() where T : class
 	{
 		var list = GetTypesOf<T>();
@@ -273,6 +379,12 @@ public class World : Scene
 		return null;
 	}
 
+	/// <summary>
+	/// Get an instance of an actor of the specified type from the world using a predicate function
+	/// </summary>
+	/// <typeparam name="T">The type to search for</typeparam>
+	/// <param name="predicate">Predicate function that takes an actor of type T and returns whether it matches</param>
+	/// <returns>The first instance found of an actor where the type is T and the predicate matches, or null if none exist</returns>
 	public T? Get<T>(Func<T, bool> predicate) where T : class
 	{
 		var list = GetTypesOf<T>();
@@ -282,17 +394,27 @@ public class World : Scene
 		return null;
 	}
 
+	/// <summary>
+	/// Get all actors of a given type in this world
+	/// </summary>
+	/// <typeparam name="T">Type to search for</typeparam>
+	/// <returns>List of actors matching the type</returns>
 	public List<Actor> All<T>()
 	{
 		return GetTypesOf<T>();
 	}
 
+	/// <summary>
+	/// Gracefully destroy a given actor and remove it from the world
+	/// </summary>
+	/// <param name="actor">The actor instance to destroy</param>
 	public void Destroy(Actor actor)
 	{
 		Debug.Assert(actor.World == this);
 		actor.Destroying = true;
 		destroying.Add(actor);
 	}
+	#endregion
 
 	private List<Actor> GetTypesOf<T>()
 	{
@@ -308,6 +430,7 @@ public class World : Scene
 		return list;
 	}
 
+	#region Update Loop
 	private void ResolveChanges()
 	{
 		// resolve adding/removing actors
@@ -364,27 +487,17 @@ public class World : Scene
 		}
 	}
 
-	public override void Entered()
-	{
-		if (Get<Player>() is { } player)
-		{
-			player.SetSkin(Save.Instance.GetSkin());
-		}
-	}
-
 	public override void Update()
 	{
 		if (Paused)
 		{
+			pauseMenu.Update();
+
 			if (Controls.Pause.ConsumePress() || (pauseMenu.IsInMainMenu && Controls.Cancel.ConsumePress()))
 			{
 				pauseMenu.CloseSubMenus();
 				SetPaused(false);
 				Audio.Play(Sfx.ui_unpause);
-			}
-			else
-			{
-				pauseMenu.Update();
 			}
 		}
 
@@ -392,6 +505,10 @@ public class World : Scene
 		{
 			return;
 		} // don't pour salt in wounds
+
+		/* Update timers */
+		RealDelta = Time.Delta;
+		Time.Delta *= TimeScale;
 
 		try
 		{
@@ -424,13 +541,13 @@ public class World : Scene
 					Calc.Approach(ref strawbCounterWiggle, 0, Time.Delta / .6f);
 
 				// hold stawb for a while
-				if ((Get<Player>()?.IsStrawberryCounterVisible ?? false))
+				if ((MainPlayer?.IsStrawberryCounterVisible ?? false))
 					strawbCounterCooldown = 2.0f;
 				else
 					strawbCounterCooldown -= Time.Delta;
 
 				// ease strawb in/out
-				if (IsInEndingArea || Paused || strawbCounterCooldown > 0 || (Get<Player>()?.IsStrawberryCounterVisible ?? false))
+				if (IsInEndingArea || Paused || strawbCounterCooldown > 0 || (MainPlayer?.IsStrawberryCounterVisible ?? false))
 					strawbCounterEase = Calc.Approach(strawbCounterEase, 1, Time.Delta * 6.0f);
 				else
 					strawbCounterEase = Calc.Approach(strawbCounterEase, 0, Time.Delta * 6.0f);
@@ -450,8 +567,18 @@ public class World : Scene
 					return;
 				}
 
+				// Fuji Custom
+				// Quick Restart if the player presses the restart button.
+				if (Controls.Restart.ConsumePress() && MainPlayer is { Dead: false } livingPlayer)
+				{
+					SetPaused(false);
+					Audio.StopBus(Sfx.bus_dialog, false);
+					livingPlayer?.Kill();
+					return;
+				}
+
 				// ONLY update the player when dead
-				if (Get<Player>() is { Dead: true } player)
+				if (MainPlayer is { Dead: true } player)
 				{
 					player.Update();
 					player.LateUpdate();
@@ -476,6 +603,7 @@ public class World : Scene
 				}
 
 				GeneralTimer += Time.Delta;
+				RealTimer += RealDelta;
 
 				// add / remove actors
 				ResolveChanges();
@@ -499,13 +627,18 @@ public class World : Scene
 		catch (Exception err)
 		{
 			string currentModName = ModManager.Instance.CurrentLevelMod != null && ModManager.Instance.CurrentLevelMod.ModInfo != null ? ModManager.Instance.CurrentLevelMod.ModInfo.Id : "unknown";
-			Log.Error($"--- ERROR in the map {currentModName}:{Entry.Map}. More details below ---");
-			Log.Error(err.ToString());
+			LogHelper.Error($"--- ERROR in the map {currentModName}:{Entry.Map}. More details below ---", err);
 
-			Panic($"Oops, critical error :(\n{err.Message}\nYou can try to recover from this error by pressing Retry,\nbut we can't promise stability!");
+			Panic(err, $"Oops, critical error :(\n{err.Message}\nYou can try to recover from this error by pressing Retry,\nbut we can't promise stability!", Panicked);
 		} // We wrap most of Update() in a try-catch to hopefully catch errors that occur during gameplay.
 	}
+	#endregion
 
+	#region Gameplay Util Methods
+	/// <summary>
+	/// Set the paused state of this world and run all accompanying procedures
+	/// </summary>
+	/// <param name="paused">Should the world be paused?</param>
 	public void SetPaused(bool paused)
 	{
 		if (paused == false && Panicked)
@@ -515,19 +648,28 @@ public class World : Scene
 
 		if (paused == false)
 		{
-			if (Game.Instance.NeedsReload)
+			/* 
+				Player data and settings might've changed, so let's save
+				To prevent spam let's add a delay - 5 seconds should be alright
+			*/
+			if ((RealTimer - PauseSaveDebounce) > 5.0f)
 			{
-				Game.Instance.NeedsReload = false;
-				Game.Instance.ReloadAssets();
+				Game.RequestSave();
+				PauseSaveDebounce = RealTimer;
 			}
 
-			var ply = Get<Player>();
+			if (ModManager.Instance.NeedsReload)
+			{
+				Game.Instance.ReloadAssets(false);
+			}
+
+			var ply = MainPlayer;
 			if (ply != null)
 			{
-				if (ply.Skin != Save.Instance.GetSkin())
+				if (ply.Skin != Save.GetSkin())
 				{
-					ply.SetSkin(Save.Instance.GetSkin());
-					ModManager.Instance.OnPlayerSkinChange(ply, Save.Instance.GetSkin());
+					ply.SetSkin(Save.GetSkin());
+					ModManager.Instance.OnPlayerSkinChange(ply, Save.GetSkin());
 				}
 			}
 		}
@@ -552,6 +694,16 @@ public class World : Scene
 		}
 	}
 
+	/// <summary>
+	/// Run a solid raycast in this world
+	/// </summary>
+	/// <param name="point">Position from which to fire the ray</param>
+	/// <param name="direction">Direction in which the ray should go</param>
+	/// <param name="distance">Maximum distance of the ray from the starting point</param>
+	/// <param name="hit">Returns data relating to this raycast hit</param>
+	/// <param name="ignoreBackfaces">Ignore backfaces of objects? default true</param>
+	/// <param name="ignoreTransparent">Ignore transparent objects? default false</param>
+	/// <returns>Whether the ray hit any object</returns>
 	public bool SolidRayCast(in Vec3 point, in Vec3 direction, float distance, out RayHit hit, bool ignoreBackfaces = true, bool ignoreTransparent = false)
 	{
 		hit = default;
@@ -622,7 +774,7 @@ public class World : Scene
 		return closest.HasValue;
 	}
 
-	public StackList8<WallHit> SolidWallCheck(in Vec3 point, float radius)
+	public StackList8<WallHit> SolidWallCheck(in Vec3 point, float radius, Func<Solid, bool>? predicate = null)
 	{
 		var radiusSquared = radius * radius;
 		var flatPlane = new Plane(Vec3.UnitZ, point.Z);
@@ -637,6 +789,9 @@ public class World : Scene
 				continue;
 
 			if (!solid.WorldBounds.Inflate(radius).Contains(point))
+				continue;
+
+			if (predicate != null && !predicate(solid))
 				continue;
 
 			var verts = solid.WorldVertices;
@@ -696,9 +851,9 @@ public class World : Scene
 		return hits;
 	}
 
-	public bool SolidWallCheckNearest(in Vec3 point, float radius, out WallHit hit)
+	public bool SolidWallCheckNearest(in Vec3 point, float radius, out WallHit hit, Func<Solid, bool>? predicate = null)
 	{
-		var hits = SolidWallCheck(point, radius);
+		var hits = SolidWallCheck(point, radius, predicate);
 		if (hits.Count > 0)
 		{
 			var closest = hits[0];
@@ -717,9 +872,9 @@ public class World : Scene
 		}
 	}
 
-	public bool SolidWallCheckClosestToNormal(in Vec3 point, float radius, Vec3 normal, out WallHit hit)
+	public bool SolidWallCheckClosestToNormal(in Vec3 point, float radius, Vec3 normal, out WallHit hit, Func<Solid, bool>? predicate = null)
 	{
-		var hits = SolidWallCheck(point, radius);
+		var hits = SolidWallCheck(point, radius, predicate);
 		if (hits.Count > 0)
 		{
 			hit = hits[0];
@@ -771,7 +926,9 @@ public class World : Scene
 		}
 		return null;
 	}
+	#endregion
 
+	#region Render
 	public override void Render(Target target)
 	{
 		debugRndTimer.Restart();
@@ -927,7 +1084,7 @@ public class World : Scene
 			// stats
 			{
 				var at = bounds.TopLeft + new Vec2(4, 8) * Game.RelativeScale;
-				if (IsInEndingArea || Save.Instance.SpeedrunTimer)
+				if (IsInEndingArea || Settings.SpeedrunTimer)
 				{
 					UI.Timer(batch, Save.CurrentRecord.Time, at);
 					at.Y += UI.IconSize + 4 * Game.RelativeScale;
@@ -1018,9 +1175,15 @@ public class World : Scene
 			it.Model.Render(ref state);
 		}
 	}
+	#endregion
 
-	private void Panic(string reason)
+	private void Panic(Exception error, string reason, bool level)
 	{
+		if (level)
+		{
+			throw error;
+		}
+
 		Audio.Play(Sfx.main_menu_restart_cancel);
 
 		Panicked = true;

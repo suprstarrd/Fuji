@@ -21,16 +21,20 @@ public sealed class ModManager
 
 	internal GameMod? CurrentLevelMod { get; set; }
 
+	internal bool NeedsReload => Mods.Any(mod => mod.NeedsReload);
+
 	internal void Unload()
 	{
 		_modFilesystemCleanupTimerToken.Cancel();
 		_modFilesystemCleanupTimerToken = new();
 		HookManager.Instance.ClearHooks();
 
-		var modsCopy = Mods.ToList();
-		foreach (var mod in modsCopy)
+		// Unload in reverse order to
+		// 1) Not need to make a copy, since entries are removed from 'Mods'
+		// 2) Respect mod dependencies, so that dependencies are unloaded after the mod which requires them
+		for (int i = Mods.Count - 1; i >= 0; i--)
 		{
-			DeregisterMod(mod);
+			DeregisterMod(Mods[i]);
 		}
 	}
 
@@ -54,11 +58,12 @@ public sealed class ModManager
 	{
 		Mods.Add(mod);
 		GlobalFilesystem.Add(mod);
-		if (mod.Filesystem != null)
-			mod.Filesystem.OnFileChanged += OnModFileChanged;
 
 		if (mod.Enabled)
 		{
+			if (mod.Filesystem != null)
+				mod.Filesystem.OnFileChanged += OnModFileChanged;
+
 			mod.OnModLoaded();
 			mod.Loaded = true;
 		}
@@ -75,8 +80,6 @@ public sealed class ModManager
 			fs.Dispose();
 		}
 
-		mod.ModInfo.AssemblyContext?.Dispose();
-
 		if (mod.Loaded)
 		{
 			mod.OnModUnloaded();
@@ -84,6 +87,8 @@ public sealed class ModManager
 		}
 
 		mod.OnUnloadedCleanup?.Invoke();
+
+		mod.ModInfo.AssemblyContext?.Dispose();
 	}
 
 	internal void OnModFileChanged(ModFileChangedCtx ctx)
@@ -107,11 +112,12 @@ public sealed class ModManager
 				(dir.StartsWith(Assets.FontsFolder) && extension is $".{Assets.FontsExtensionTTF}" or $".{Assets.FontsExtensionOTF}") ||
 				(dir.StartsWith(Assets.SpritesFolder) && extension == $".{Assets.SpritesExtension}") ||
 				(dir.StartsWith(Assets.SkinsFolder) && extension == $".{Assets.SkinsExtension}") ||
-				(dir.StartsWith(Assets.LibrariesFolder) && extension == $".{Assets.LibrariesExtensionAssembly}") ||
+				(dir == Assets.LibrariesFolder && extension is $".{Assets.LibrariesExtensionAssembly}") ||
+				(dir.StartsWith(Path.Combine(Assets.LibrariesFolder, "lib")) && extension is ".dll" or ".so" or ".dylib") ||
 				filepath.ToLower() == Assets.LevelsJSON.ToLower() ||
 				filepath.ToLower() == Assets.FujiJSON.ToLower())
 			{
-				Log.Info($"File Changed: {filepath} (From mod {ctx.Mod.ModInfo.Name}). Reloading assets.");
+				Log.Info($"File Changed: {filepath} (From mod {ctx.Mod.ModInfo.Name}). {(Settings.EnableAutoReload ? "Reloading assets." : "Queued for reload.")}");
 			}
 			else
 			{
@@ -121,10 +127,18 @@ public sealed class ModManager
 		}
 		else
 		{
-			Log.Info($"Mod archive for mod {ctx.Mod.ModInfo.Name} changed. Reloading assets.");
+			Log.Info($"Mod archive for mod {ctx.Mod.ModInfo.Name} changed. {(Settings.EnableAutoReload ? "Reloading assets." : "Queued for reload.")}");
 		}
+		ctx.Mod.SetNeedsReloadRecursive();
+		if (Settings.EnableAutoReload) Game.Instance.ReloadAssets(false);
+	}
 
-		Game.Instance.ReloadAssets();
+	internal void PreUpdate(float deltaTime)
+	{
+		foreach (var mod in EnabledMods)
+		{
+			mod.PreUpdate(deltaTime);
+		}
 	}
 
 	internal void Update(float deltaTime)
@@ -253,6 +267,16 @@ public sealed class ModManager
 		foreach (var mod in EnabledMods)
 		{
 			mod.OnPlayerStateChanged(player, state);
+		}
+	}
+
+	internal void AfterSceneRender(Batcher batch)
+	{
+		foreach (var mod in EnabledMods)
+		{
+			mod.AfterSceneRender(batch);
+			batch.Render(Game.Instance.target);
+			batch.Clear();
 		}
 	}
 }

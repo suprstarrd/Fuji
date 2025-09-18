@@ -28,7 +28,7 @@ public class Overworld : Scene
 		public float HighlightEase;
 		public float SelectionEase;
 
-		public Entry(LevelInfo level, GameMod mod)
+		public Entry(LevelInfo level, GameMod? mod)
 		{
 			Level = level;
 			Target = new Target(CardWidth, CardHeight);
@@ -50,7 +50,7 @@ public class Overworld : Scene
 				DownSound = Sfx.main_menu_roll_down,
 			};
 
-			if (Save.Instance.TryGetRecord(Level.ID) is { } record)
+			if (Save.TryGetRecord(Level.ID) is { } record)
 			{
 				Menu.Add(new Menu.Option("Continue"));
 				Menu.Add(new Menu.Option("Restart"));
@@ -76,7 +76,7 @@ public class Overworld : Scene
 			int strawbs = 0, deaths = 0;
 			TimeSpan time = new();
 
-			if (selected && Save.Instance.TryGetRecord(Level.ID) is { } record) // only the selected item should have its save queried
+			if (selected && Save.TryGetRecord(Level.ID) is { } record) // only the selected item should have its save queried
 			{
 				strawbs = record.Strawberries.Count;
 				deaths = record.Deaths;
@@ -107,8 +107,8 @@ public class Overworld : Scene
 				{
 					batch.PopMatrix();
 					batch.PushMatrix(Matrix3x2.CreateScale(1.5f) * Matrix3x2.CreateTranslation(bounds.BottomLeft + new Vec2(Padding, -Padding)));
-					UI.Strawberries(batch, strawbs, new Vec2(-4, -20));
-					UI.Deaths(batch, deaths, new Vec2(64, -20));
+					UI.Strawberries(batch, strawbs, new Vec2(-4 * Game.RelativeScale, -20 * Game.RelativeScale));
+					UI.Deaths(batch, deaths, new Vec2(64 * Game.RelativeScale, -20 * Game.RelativeScale));
 				}
 				batch.PopMatrix();
 			}
@@ -180,6 +180,7 @@ public class Overworld : Scene
 	private readonly Material material = new(Assets.Shaders["Sprite"]);
 	private Subtexture strawberryImage = Assets.Subtextures["icon_strawberry"];
 	private readonly Menu restartConfirmMenu = new();
+	private bool WasBigSlide = false;
 	#endregion
 
 	#region Overworld Constructor
@@ -221,7 +222,7 @@ public class Overworld : Scene
 	}
 	#endregion
 
-	#region Overworld Methods
+  #region Overworld Methods
 	public List<Entry> GetCurrentModEntries()
 	{
 		List<Entry> entriesTemp = [];
@@ -291,16 +292,22 @@ public class Overworld : Scene
 
 		if (state == States.Selecting && !Paused)
 		{
-			// Currently, the QOL feature that lets you skip to the first/last item no longer exists :(
-			// Todo: reimplement it. (Home/End keys? Bumpers on controller?)
+			/* Held repeat */
+   			if (Controls.Menu.Horizontal.Negative.Repeated) index--;
+	  		if (Controls.Menu.Horizontal.Positive.Repeated) index++;
+
 			var was = index;
 			if (Controls.Menu.Horizontal.Negative.Pressed)
 			{
+				if (Controls.Confirm.Down) { index = 0; WasBigSlide = true; return; }
+
 				Controls.Menu.ConsumePress();
 				index--;
 			}
 			if (Controls.Menu.Horizontal.Positive.Pressed)
 			{
+				if (Controls.Confirm.Down) { index = entries.Count - 1; WasBigSlide = true; return; }
+
 				Controls.Menu.ConsumePress();
 				index++;
 			}
@@ -319,8 +326,9 @@ public class Overworld : Scene
 			if (was != index)
 				Audio.Play(Sfx.ui_move);
 
-			if (Controls.Confirm.ConsumePress())
+			if (Controls.Confirm.Released && !Paused)
 			{
+				if (WasBigSlide) { WasBigSlide = false; return; }
 				state = States.Selected;
 				entries[index].Menu.Index = 0;
 				Audio.Play(Sfx.main_menu_postcard_flip);
@@ -346,20 +354,25 @@ public class Overworld : Scene
 					pauseMenu = new() { Title = Loc.Str("PauseOptions") };
 
 					Menu optionsMenu = new GameOptionsMenu(pauseMenu);
+					var savesMenu = new SaveSelectionMenu(pauseMenu)
+					{
+						Title = Loc.Str("PauseSaves")
+					};
 					var modMenu = new ModSelectionMenu(pauseMenu)
 					{
-						Title = "Mods Menu"
+						Title = Loc.Str("PauseModsMenu")
 					};
 
 					pauseMenu.Add(new Menu.Submenu("PauseOptions", pauseMenu, optionsMenu));
-					pauseMenu.Add(new Menu.Submenu("Mods", pauseMenu, modMenu));
+					pauseMenu.Add(new Menu.Submenu("PauseSaves", pauseMenu, savesMenu));
+					pauseMenu.Add(new Menu.Submenu("PauseModsMenu", pauseMenu, modMenu));
 					pauseMenu.Add(new Menu.Option("Exit", () =>
 					{
-						if (Game.Instance.NeedsReload)
+						if (ModManager.Instance.NeedsReload)
 						{
-							Game.Instance.NeedsReload = false;
-							Game.Instance.ReloadAssets();
+							Game.Instance.ReloadAssets(false);
 						}
+
 						Paused = false;
 					}));
 
@@ -402,7 +415,7 @@ public class Overworld : Scene
 					Audio.Play(Sfx.main_menu_start_game);
 					Game.Instance.Music.Stop();
 					Game.Instance.MusicWav?.Stop();
-					Save.Instance.EraseRecord(entries[index].Level.ID);
+					Save.EraseRecord(entries[index].Level.ID);
 					state = States.Entering;
 				}
 				else
@@ -426,16 +439,20 @@ public class Overworld : Scene
 		}
 		else if (Paused)
 		{
+			if (pauseMenu != null)
+			{
+				pauseMenu.Update();
+			}
+
 			if (Controls.Pause.ConsumePress() || (pauseMenu is { IsInMainMenu: true } && Controls.Cancel.ConsumePress()))
 			{
 				if (pauseMenu != null)
 				{
 					pauseMenu.CloseSubMenus();
 				}
-				if (Game.Instance.NeedsReload)
+				if (ModManager.Instance.NeedsReload)
 				{
-					Game.Instance.NeedsReload = false;
-					Game.Instance.ReloadAssets();
+					Game.Instance.ReloadAssets(false);
 				}
 				Audio.Play(Sfx.ui_unpause);
 				Paused = false;
@@ -517,13 +534,13 @@ public class Overworld : Scene
 
 				var modIcon = mod.Subtextures.TryGetValue(mod.ModInfo.Icon ?? "", out var value) ? value : strawberryImage;
 				var modIconSelectedSize = sel ? ModIconSizeLarge : ModIconSize;
-				var modIconSize = new Vec2(modIconSelectedSize / modIcon.Width, modIconSelectedSize / modIcon.Height);
+        var modIconSize = new Vec2(modIconSelectedSize / modIcon.Width, modIconSelectedSize / modIcon.Height) * Game.RelativeScale;
 
 				batch.Image(
 					modIcon,
 					new Vec2(
-						(sel ? -(ModIconSizeLarge - ModIconSize) : 0) + ModIconLeftMargin, // Horizontal
-						(sel ? -(ModIconSizeLarge - ModIconSize) : 0) + (ModIconSpacing * relativeIndex) + (bounds.Height / 2) - ModIconVertAdjust // Vertical
+            ((sel ? -(ModIconSizeLarge - ModIconSize) : 0) + ModIconLeftMargin) * Game.RelativeScale, // Horizontal
+						((sel ? -(ModIconSizeLarge - ModIconSize) : 0) + (ModIconSpacing * relativeIndex) - ModIconVertAdjust) * Game.RelativeScale + (bounds.Height / 2)// Vertical
 					),
 					Vec2.Zero, modIconSize, 0, Color.White);
 			}
@@ -593,8 +610,6 @@ public class Overworld : Scene
 
 		if (Paused && pauseMenu != null)
 		{
-			pauseMenu.Update();
-
 			batch.Rect(bounds, Color.Black * 0.70f);
 
 			pauseMenu.Render(batch, bounds.Center);
